@@ -440,7 +440,7 @@ func TestSwitchedOffEngineIsNotRetried(t *testing.T) {
 
 func TestCapabilities(t *testing.T) {
 	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/capabilities" {
+		if r.URL.Path != "/config/capabilities" {
 			t.Errorf("path = %s", r.URL.Path)
 		}
 		io.WriteString(w, `{"modules":[{"name":"crawl","enabled":true}],

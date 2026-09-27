@@ -45,7 +45,7 @@ func (c *Capabilities) EngineEnabled(e Engine) bool {
 // ErrEngineUnavailable.
 func (c *Client) Capabilities(ctx context.Context) (*Capabilities, error) {
 	var out Capabilities
-	if err := c.do(ctx, request{method: http.MethodGet, path: "/capabilities"}, &out); err != nil {
+	if err := c.do(ctx, request{method: http.MethodGet, path: "/config/capabilities"}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
