@@ -332,6 +332,7 @@ func (c *Client) WaitTask(ctx context.Context, taskID string) (*Result, error) {
 
 func (c *Client) runTask(ctx context.Context, path string, body envelope, key string) (*Result, error) {
 	r := request{method: http.MethodPost, path: path, body: body, idempotencyKey: keyOr(key)}
+	var processing error
 	for {
 		var res Result
 		err := c.do(ctx, r, &res)
@@ -339,8 +340,12 @@ func (c *Client) runTask(ctx context.Context, path string, body envelope, key st
 			return &res, res.Err()
 		}
 		if !errors.Is(err, ErrTaskStillProcessing) {
+			if processing != nil && ctx.Err() != nil {
+				return nil, fmt.Errorf("%w: %w", processing, err)
+			}
 			return nil, err
 		}
+		processing = err
 		if serr := sleep(ctx, c.pollInterval); serr != nil {
 			return nil, fmt.Errorf("%w: %w", err, serr)
 		}
