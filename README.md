@@ -111,6 +111,7 @@ All work with `errors.Is` and `errors.As`.
 
 - `datafuel.ErrNoAPIKey`: no key was passed and `DATAFUEL_API_KEY` is empty. Returned before any request.
 - `*datafuel.APIError`: the API refused the request. Sentinels: `ErrUnauthorized`, `ErrInsufficientCredits`, `ErrRateLimited`, `ErrNotFound`, `ErrInvalidAttributes`, `ErrIdempotencyKeyReused`.
+- `ErrTaskStillProcessing`: the API answered 202, the task has not finished. `Scrape`, `Map` and `Ask` handle it by re-sending with the same `Idempotency-Key` until the task is done, so you only see it, together with the context error, when your context ends first. Send the request again with the same `IdempotencyKey` to pick the task up.
 - `ErrModuleUnavailable`, `ErrEngineUnavailable`: an operator switched a task type or LLM engine off, e.g. during a provider outage. The reason is in the error message, nothing is charged, and the SDK does not retry. `client.Capabilities(ctx)` lists what is on.
 - `*datafuel.TaskError`: the API accepted the task but the page could not be scraped. Matches `ErrTaskFailed`, and `ErrBlocked` when the target refused. The `Result` is returned together with the error. Failed tasks are refunded.
 

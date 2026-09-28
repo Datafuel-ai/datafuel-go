@@ -457,3 +457,40 @@ func TestCapabilities(t *testing.T) {
 		t.Fatalf("reason lost: %+v", caps.Engines[1])
 	}
 }
+
+func TestScrapeStillProcessingReplaysWithSameKey(t *testing.T) {
+	var calls atomic.Int32
+	var keys []string
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		if calls.Add(1) < 3 {
+			w.WriteHeader(http.StatusAccepted)
+			io.WriteString(w, `{"code":"TASK_STILL_PROCESSING","message":"The task is still being processed. Please try again."}`)
+			return
+		}
+		io.WriteString(w, `{"id":"t1","status":"completed","credits_used":1,"result":{"data":"done"}}`)
+	})
+	res, err := client.Scrape(context.Background(), &ScrapeRequest{URL: "https://example.com"})
+	if err != nil || res.Text() != "done" || res.ID != "t1" {
+		t.Fatalf("a 202 must be polled, not returned as a result: res=%+v err=%v", res, err)
+	}
+	if len(keys) != 3 || keys[0] == "" || keys[0] != keys[1] || keys[1] != keys[2] {
+		t.Fatalf("replays must reuse one key: %v", keys)
+	}
+}
+
+func TestStillProcessingSurfacesWhenContextEnds(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		io.WriteString(w, `{"code":"TASK_STILL_PROCESSING","message":"The task is still being processed. Please try again."}`)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	site, err := client.Map(ctx, &MapRequest{URL: "https://example.com"})
+	if site != nil || !errors.Is(err, ErrTaskStillProcessing) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("site=%+v err=%v", site, err)
+	}
+	if _, err := client.Markdown(ctx, "https://example.com"); err == nil {
+		t.Fatal("Markdown must not return empty text for an unfinished task")
+	}
+}

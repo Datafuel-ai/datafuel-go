@@ -183,6 +183,11 @@ func (c *Client) once(ctx context.Context, r request, target string, payload []b
 		retryAfter, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
 		return time.Duration(retryAfter) * time.Second, newAPIError(resp.StatusCode, data)
 	}
+	if resp.StatusCode == http.StatusAccepted {
+		if e := newAPIError(resp.StatusCode, data); e.Code == codeStillProcessing {
+			return 0, e
+		}
+	}
 	if out == nil || len(data) == 0 {
 		return 0, nil
 	}
