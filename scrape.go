@@ -65,8 +65,11 @@ type ScrapeOptions struct {
 	JSRendering              bool   `json:"js_rendering,omitempty"`
 	WaitForSelector          string `json:"wait_for_selector,omitempty"`
 	WaitForSelectorTimeoutMs int    `json:"wait_for_selector_timeout_ms,omitempty"`
-	JSInstructions           any    `json:"js_instructions,omitempty"`
-	BlockResource            string `json:"block_resource,omitempty"`
+	// JSInstructions is a JSON object keyed by action, e.g.
+	// map[string]any{"wait_ms": 2000}. GET /config/js-instructions lists the
+	// actions. A JSON array is rejected with ErrInvalidAttributes.
+	JSInstructions any    `json:"js_instructions,omitempty"`
+	BlockResource  string `json:"block_resource,omitempty"`
 
 	// Markdown only. IncludeImages defaults to true on the API; point it at
 	// false to drop images and save tokens.
@@ -309,6 +312,24 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*Result, error) {
 	return &res, res.Err()
 }
 
+// WaitTask polls GetTask until the task is done or ctx ends. On error it
+// still returns the last result it saw, which may be nil.
+func (c *Client) WaitTask(ctx context.Context, taskID string) (*Result, error) {
+	var last *Result
+	for {
+		res, err := c.GetTask(ctx, taskID)
+		if res != nil {
+			last = res
+		}
+		if err != nil || !res.Pending() {
+			return last, err
+		}
+		if err := sleep(ctx, c.pollInterval); err != nil {
+			return last, err
+		}
+	}
+}
+
 func (c *Client) runTask(ctx context.Context, path string, body envelope, key string) (*Result, error) {
 	r := request{method: http.MethodPost, path: path, body: body, idempotencyKey: keyOr(key)}
 	for {
@@ -345,6 +366,7 @@ type AskRequest struct {
 	WebSearch      bool
 	FollowUp       string
 	Country        string
+	Location       string
 	Format         string
 	IdempotencyKey string
 }
@@ -356,6 +378,7 @@ func (r *AskRequest) attributes(target map[string]any) map[string]any {
 	}
 	setIf(target, "follow_up_prompt", r.FollowUp)
 	setIf(target, "proxy_country", r.Country)
+	setIf(target, "location", r.Location)
 	setIf(target, "result_format", r.Format)
 	return target
 }

@@ -494,3 +494,152 @@ func TestStillProcessingSurfacesWhenContextEnds(t *testing.T) {
 		t.Fatal("Markdown must not return empty text for an unfinished task")
 	}
 }
+
+func TestWaitTaskPollsUntilDone(t *testing.T) {
+	var calls atomic.Int32
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/task/t9" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		if calls.Add(1) < 3 {
+			w.WriteHeader(http.StatusAccepted)
+			io.WriteString(w, `{"code":"TASK_STILL_PROCESSING","message":"still processing"}`)
+			return
+		}
+		io.WriteString(w, `{"id":"t9","status":"completed","credits_used":1,"result":{"data":"ok"}}`)
+	})
+	res, err := client.WaitTask(context.Background(), "t9")
+	if err != nil || res.Text() != "ok" || calls.Load() != 3 {
+		t.Fatalf("res=%+v err=%v calls=%d", res, err, calls.Load())
+	}
+}
+
+func TestSearchSendsSERPAttributes(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/task" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Idempotency-Key") == "" {
+			t.Errorf("writes must carry an Idempotency-Key")
+		}
+		body := readBody(t, r)
+		attrs := body["attributes"].(map[string]any)
+		if body["type"] != "serp" || attrs["query"] != "best crm" || attrs["country"] != "us" ||
+			attrs["page"] != float64(2) || attrs["lat"] != 52.5 || attrs["nfpr"] != true || attrs["result_format"] != "markdown" {
+			t.Errorf("body = %v", body)
+		}
+		if _, ok := body["proxy_type"]; ok {
+			t.Errorf("serp takes no proxy type: %v", body)
+		}
+		if _, ok := attrs["location"]; ok {
+			t.Errorf("zero fields must be omitted: %v", attrs)
+		}
+		io.WriteString(w, `{"id":"s1","status":"completed","credits_used":50,"result":{"data":{"organic":[{"title":"HubSpot"}]}}}`)
+	})
+	lat, lon, nfpr := 52.5, 13.4, true
+	res, err := client.Search(context.Background(), &SearchRequest{
+		Query: "best crm", Country: "us", Page: 2, Lat: &lat, Lon: &lon, NFPR: &nfpr, Format: FormatMarkdown,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Organic []struct{ Title string } `json:"organic"`
+	}
+	if err := res.Decode(&out); err != nil || out.Organic[0].Title != "HubSpot" {
+		t.Fatalf("decode: %+v %v", out, err)
+	}
+}
+
+func TestCreateSearchJobSendsQueries(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		body := readBody(t, r)
+		attrs := body["attributes"].(map[string]any)
+		if r.URL.Path != "/job" || body["type"] != "serp" || body["multithreaded"] != false || attrs["language"] != "de" {
+			t.Errorf("%s body = %v", r.URL.Path, body)
+		}
+		if qs := attrs["queries"].([]any); len(qs) != 2 {
+			t.Errorf("queries = %v", qs)
+		}
+		if _, ok := attrs["query"]; ok {
+			t.Errorf("a job must not send query: %v", attrs)
+		}
+		io.WriteString(w, `{"id":"j2"}`)
+	})
+	id, err := client.CreateSearchJob(context.Background(), &SearchJobRequest{
+		Queries: []string{"a", "b"}, Sequential: true,
+		SearchRequest: SearchRequest{Query: "ignored", Language: "de"},
+	})
+	if err != nil || id != "j2" {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+}
+
+func TestAskSendsLocation(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		attrs := readBody(t, r)["attributes"].(map[string]any)
+		if attrs["location"] != "Berlin, Germany" {
+			t.Errorf("attributes = %v", attrs)
+		}
+		io.WriteString(w, `{"id":"t1","status":"completed","credits_used":100,"result":{"data":"ok"}}`)
+	})
+	if _, err := client.Ask(context.Background(), &AskRequest{Prompt: "p", Engine: EngineOpenAI, Location: "Berlin, Germany"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMapSendsUserAgent(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		attrs := readBody(t, r)["attributes"].(map[string]any)
+		if attrs["user_agent_type"] != "firefox" || attrs["user_agent"] != "bot/1" {
+			t.Errorf("attributes = %v", attrs)
+		}
+		io.WriteString(w, `{"id":"m1","status":"completed","credits_used":1,"result":{"data":{"url":"https://a.io","links":[]}}}`)
+	})
+	if _, err := client.Map(context.Background(), &MapRequest{URL: "https://a.io", UserAgentType: "firefox", UserAgent: "bot/1"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCancelJobAndCrawl(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/job/j1/cancel":
+			io.WriteString(w, `{"status":"cancelled","tasks_count":5,"tasks_done":2,"tasks_remaining":0,"total_cost":5,
+				"refunded_tasks":3,"refunded_credits":3}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/crawl/c1/cancel":
+			w.WriteHeader(http.StatusConflict)
+			io.WriteString(w, `{"code":"JOB_NOT_CANCELLABLE","message":"The job already finished and cannot be cancelled"}`)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+	res, err := client.CancelJob(context.Background(), "j1")
+	if err != nil || res.Status != StatusCancelled || res.RefundedTasks != 3 || res.RefundedCredits != 3 || res.TasksCount != 5 {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if _, err := client.CancelCrawl(context.Background(), "c1"); !errors.Is(err, ErrJobNotCancellable) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestGetCrawlTimestamps(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"status":"processing","stop_reason":null,"pages":{"discovered":4},"depth_reached":1,"total_cost":2,
+			"created_at":"2026-09-28T10:00:00Z","updated_at":"2026-09-28T10:00:05Z"}`)
+	})
+	status, err := client.GetCrawl(context.Background(), "c1")
+	if err != nil || status.StopReason != "" || status.UpdatedAt.Sub(status.CreatedAt) != 5*time.Second {
+		t.Fatalf("status=%+v err=%v", status, err)
+	}
+}
+
+func TestJobTargetSentinel(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"code":"JOB_REQUIRES_MULTIPLE_TARGETS","message":"Job requires multiple targets"}`)
+	})
+	if _, err := client.CreateJob(context.Background(), &JobRequest{URLs: []string{"https://a.io"}}); !errors.Is(err, ErrJobRequiresMultipleTargets) {
+		t.Fatalf("err = %v", err)
+	}
+}

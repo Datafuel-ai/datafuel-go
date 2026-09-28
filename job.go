@@ -7,7 +7,8 @@ import (
 )
 
 // JobRequest scrapes a list of known URLs asynchronously. Cheaper and more
-// predictable than a crawl when you already have the URLs.
+// predictable than a crawl when you already have the URLs. A job needs at
+// least two URLs, fewer fail with ErrJobRequiresMultipleTargets.
 type JobRequest struct {
 	URLs  []string
 	Proxy Proxy
@@ -32,6 +33,14 @@ type JobStatus struct {
 	TasksDone      int    `json:"tasks_done"`
 	TasksRemaining int    `json:"tasks_remaining"`
 	TotalCost      int    `json:"total_cost"`
+}
+
+// CancelResult is the state of a job or crawl after a cancel. Pending tasks
+// fail and are refunded; tasks already in flight finish and bill normally.
+type CancelResult struct {
+	JobStatus
+	RefundedTasks   int `json:"refunded_tasks"`
+	RefundedCredits int `json:"refunded_credits"`
 }
 
 // JobResults holds every task of a job. Check Result.Err per task: a job
@@ -88,6 +97,20 @@ func (c *Client) GetJob(ctx context.Context, jobID string) (*JobStatus, error) {
 func (c *Client) JobResults(ctx context.Context, jobID string) (*JobResults, error) {
 	var out JobResults
 	if err := c.do(ctx, request{method: http.MethodGet, path: "/job/" + url.PathEscape(jobID) + "/results"}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CancelJob stops a job. Cancelling a cancelled job is a no-op; a finished
+// job fails with ErrJobNotCancellable.
+func (c *Client) CancelJob(ctx context.Context, jobID string) (*CancelResult, error) {
+	return c.cancel(ctx, "/job/"+url.PathEscape(jobID)+"/cancel")
+}
+
+func (c *Client) cancel(ctx context.Context, path string) (*CancelResult, error) {
+	var out CancelResult
+	if err := c.do(ctx, request{method: http.MethodPost, path: path}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

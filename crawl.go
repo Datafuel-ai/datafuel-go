@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 )
 
 // CrawlRequest follows links from a start URL and scrapes every page. Pages
@@ -44,7 +45,9 @@ type CrawlStatus struct {
 	DepthReached int `json:"depth_reached"`
 	// TotalCost is what was charged at queue time; refunds of failed pages
 	// are not subtracted. Sum CrawlPage.CreditsUsed for the net figure.
-	TotalCost int `json:"total_cost"`
+	TotalCost int       `json:"total_cost"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // CrawlPage is one crawled page: where it was found plus the scrape Result.
@@ -110,6 +113,13 @@ func (c *Client) GetCrawl(ctx context.Context, crawlID string) (*CrawlStatus, er
 		return nil, err
 	}
 	return &out, nil
+}
+
+// CancelCrawl stops a crawl from expanding. Pending pages are refunded,
+// pages in flight finish and bill. A finished crawl fails with
+// ErrJobNotCancellable.
+func (c *Client) CancelCrawl(ctx context.Context, crawlID string) (*CancelResult, error) {
+	return c.cancel(ctx, "/crawl/"+url.PathEscape(crawlID)+"/cancel")
 }
 
 // CrawlResults returns one page of results in discovery order. limit 0 uses

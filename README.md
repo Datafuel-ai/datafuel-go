@@ -20,7 +20,9 @@ markdown, err := client.Markdown(ctx, "https://example.com")
 | A site, need its URL list | `Map` | yes |
 | A start URL, need many pages | `Crawl`, or `StartCrawl` + `WaitCrawl` + `CrawlPages` | `Crawl` does |
 | A list of known URLs | `RunJob`, or `CreateJob` + `WaitJob` + `JobResults` | `RunJob` does |
-| A question for an AI engine | `Ask` | yes |
+| A Google search | `Search`, or `CreateSearchJob` for two or more queries | `Search` does |
+| A question for an AI engine | `Ask`, or `CreateAskJob` for two or more prompts | `Ask` does |
+| A task ID from a job or crawl | `GetTask` / `WaitTask` | `WaitTask` does |
 
 Start with plain `Scrape`. Turn on `JSRendering` only when the page comes back empty: it is slower and costs five times the credits on a Basic proxy. `Map` a section before you `Crawl` it, it costs one credit and tells you how big it is.
 
@@ -84,6 +86,8 @@ Check `StopReason`: `insufficient_credits` means the crawl ended early. If the c
 
 Unset limits use the API defaults: 100 pages, depth 3, 5 pages in flight.
 
+`client.CancelCrawl(ctx, id)` stops a running crawl, `client.CancelJob(ctx, id)` a job. Pending pages and tasks are refunded (`RefundedTasks`, `RefundedCredits`); those already in flight finish and bill. A finished one returns `ErrJobNotCancellable`.
+
 ## Jobs
 
 ```go
@@ -95,6 +99,18 @@ for _, task := range results.Tasks {
     if err := task.Err(); err != nil { /* this URL failed, the others did not */ }
 }
 ```
+
+A job needs at least two URLs; one fails with `ErrJobRequiresMultipleTargets`. Use `Scrape` for a single URL.
+
+## Search
+
+```go
+res, err := client.Search(ctx, &datafuel.SearchRequest{Query: "best crm", Country: "us", Language: "en"})
+var serp map[string]any
+err = res.Decode(&serp)
+```
+
+Results are JSON unless you set `Format` to `FormatHTML` or `FormatMarkdown`. `Location`, `UULE` and `Lat`/`Lon` are mutually exclusive.
 
 ## Map
 
@@ -110,8 +126,8 @@ An empty `site.Links` comes with a `site.Reason`. `no_links_on_page` usually mea
 All work with `errors.Is` and `errors.As`.
 
 - `datafuel.ErrNoAPIKey`: no key was passed and `DATAFUEL_API_KEY` is empty. Returned before any request.
-- `*datafuel.APIError`: the API refused the request. Sentinels: `ErrUnauthorized`, `ErrInsufficientCredits`, `ErrRateLimited`, `ErrNotFound`, `ErrInvalidAttributes`, `ErrIdempotencyKeyReused`.
-- `ErrTaskStillProcessing`: the API answered 202, the task has not finished. `Scrape`, `Map` and `Ask` handle it by re-sending with the same `Idempotency-Key` until the task is done, so you only see it, together with the context error, when your context ends first. Send the request again with the same `IdempotencyKey` to pick the task up.
+- `*datafuel.APIError`: the API refused the request. Sentinels: `ErrUnauthorized`, `ErrInsufficientCredits`, `ErrRateLimited`, `ErrNotFound`, `ErrInvalidAttributes`, `ErrIdempotencyKeyReused`, `ErrJobRequiresMultipleTargets`, `ErrJobNotCancellable`.
+- `ErrTaskStillProcessing`: the API answered 202, the task has not finished. `Scrape`, `Map`, `Search` and `Ask` handle it by re-sending with the same `Idempotency-Key` until the task is done, so you only see it, together with the context error, when your context ends first. Send the request again with the same `IdempotencyKey` to pick the task up.
 - `ErrModuleUnavailable`, `ErrEngineUnavailable`: an operator switched a task type or LLM engine off, e.g. during a provider outage. The reason is in the error message, nothing is charged, and the SDK does not retry. `client.Capabilities(ctx)` lists what is on.
 - `*datafuel.TaskError`: the API accepted the task but the page could not be scraped. Matches `ErrTaskFailed`, and `ErrBlocked` when the target refused. The `Result` is returned together with the error. Failed tasks are refunded.
 

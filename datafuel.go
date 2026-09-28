@@ -9,6 +9,7 @@
 //   - the URL list of a site       → [Client.Map]
 //   - many pages from a start URL  → [Client.Crawl]
 //   - a list of known URLs         → [Client.RunJob]
+//   - a Google search              → [Client.Search]
 //   - a question for an AI engine  → [Client.Ask]
 //
 // Every write carries an Idempotency-Key (generated when you do not set one),

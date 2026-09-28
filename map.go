@@ -6,6 +6,18 @@ import (
 	"fmt"
 )
 
+func toAttrs(v any) (map[string]any, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("datafuel: encode request: %w", err)
+	}
+	attrs := map[string]any{}
+	if err := json.Unmarshal(raw, &attrs); err != nil {
+		return nil, fmt.Errorf("datafuel: encode request: %w", err)
+	}
+	return attrs, nil
+}
+
 // MapRequest lists the URLs of a site without scraping them. One credit per
 // call on a Basic proxy, however many links come back.
 type MapRequest struct {
@@ -18,6 +30,8 @@ type MapRequest struct {
 	IncludeSubdomains bool   `json:"include_subdomains,omitempty"`
 	IgnoreSitemap     bool   `json:"ignore_sitemap,omitempty"`
 	SitemapOnly       bool   `json:"sitemap_only,omitempty"`
+	UserAgentType     string `json:"user_agent_type,omitempty"` // chrome, firefox, safari, edge
+	UserAgent         string `json:"user_agent,omitempty"`
 
 	IdempotencyKey string `json:"-"`
 }
@@ -54,13 +68,9 @@ func (c *Client) Map(ctx context.Context, req *MapRequest) (*SiteMap, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	raw, err := json.Marshal(req)
+	attrs, err := toAttrs(req)
 	if err != nil {
-		return nil, fmt.Errorf("datafuel: encode request: %w", err)
-	}
-	attrs := map[string]any{}
-	if err := json.Unmarshal(raw, &attrs); err != nil {
-		return nil, fmt.Errorf("datafuel: encode request: %w", err)
+		return nil, err
 	}
 	res, err := c.runTask(ctx, "/map", envelope{Type: "map", Proxy: req.Proxy, Attributes: req.Proxy.session(attrs)}, req.IdempotencyKey)
 	if err != nil {
