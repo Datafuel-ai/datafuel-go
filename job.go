@@ -62,7 +62,7 @@ func (c *Client) CreateJob(ctx context.Context, req *JobRequest) (string, error)
 	if err != nil {
 		return "", err
 	}
-	return c.createJob(ctx, envelope{Type: "unlocker", Proxy: req.Proxy, Attributes: attrs}, req.Sequential, req.IdempotencyKey)
+	return c.createJob(ctx, envelope{Type: "unlocker", Proxy: req.Proxy, Attributes: req.Proxy.session(attrs)}, req.Sequential, req.IdempotencyKey)
 }
 
 // CreateAskJob queues a batch of prompts and returns the job ID.

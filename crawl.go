@@ -100,7 +100,7 @@ func (c *Client) StartCrawl(ctx context.Context, req *CrawlRequest) (string, err
 	}
 	err = c.do(ctx, request{
 		method: http.MethodPost, path: "/crawl",
-		body:           envelope{Type: "crawl", Proxy: req.Proxy, Attributes: attrs},
+		body:           envelope{Type: "crawl", Proxy: req.Proxy, Attributes: req.Proxy.session(attrs)},
 		idempotencyKey: keyOr(req.IdempotencyKey),
 	}, &out)
 	return out.JobID, err

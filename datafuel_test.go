@@ -330,9 +330,23 @@ func TestStickySessionTravelsInAttributes(t *testing.T) {
 		if body["proxy_country"] != "DE" {
 			t.Errorf("%s: country belongs in the envelope: %v", r.URL.Path, body)
 		}
-		io.WriteString(w, `{"id":"t1","status":"completed","result":{"data":{"url":"https://a.io","links":[]}}}`)
+		switch r.URL.Path {
+		case "/job":
+			io.WriteString(w, `{"id":"j1"}`)
+		case "/crawl":
+			w.WriteHeader(http.StatusAccepted)
+			io.WriteString(w, `{"job_id":"c1"}`)
+		default:
+			io.WriteString(w, `{"id":"t1","status":"completed","result":{"data":{"url":"https://a.io","links":[]}}}`)
+		}
 	})
 	proxy := Proxy{Country: "DE", SessionID: "s1", TTL: 300}
+	if _, err := client.CreateJob(context.Background(), &JobRequest{URLs: []string{"https://a.io", "https://b.io"}, Proxy: proxy}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.StartCrawl(context.Background(), &CrawlRequest{URL: "https://a.io", Proxy: proxy}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := client.Scrape(context.Background(), &ScrapeRequest{URL: "https://a.io", Proxy: proxy}); err != nil {
 		t.Fatal(err)
 	}

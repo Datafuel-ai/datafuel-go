@@ -38,7 +38,8 @@ type Proxy struct {
 	State   string    `json:"proxy_state,omitempty"`
 	ASN     string    `json:"proxy_asn,omitempty"`
 	// SessionID reuses the same exit across requests; TTL is its lifetime in
-	// seconds. Scrape and Map only.
+	// seconds. Sent on Scrape, Map, CreateJob, RunJob and crawls; a job or
+	// crawl shares the session across all of its tasks.
 	SessionID string `json:"-"`
 	TTL       int    `json:"-"`
 }
