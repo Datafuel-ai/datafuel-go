@@ -42,6 +42,13 @@ var (
 	ErrInsufficientCredits  error = &APIError{Code: "INSUFFICIENT_CREDITS"}
 	ErrInvalidAttributes    error = &APIError{Code: "INVALID_ATTRIBUTES"}
 	ErrIdempotencyKeyReused error = &APIError{Code: "IDEMPOTENCY_KEY_REUSED"}
+	// ErrTaskStillProcessing is the 202 answer for a task that has not
+	// finished yet. Scrape, Ask, Search and Map re-send the request with the
+	// same Idempotency-Key until the task is done, so they only return it
+	// together with the context error once ctx ends.
+	ErrTaskStillProcessing        error = &APIError{Code: codeStillProcessing}
+	ErrJobRequiresMultipleTargets error = &APIError{Code: "JOB_REQUIRES_MULTIPLE_TARGETS"}
+	ErrJobNotCancellable          error = &APIError{Code: "JOB_NOT_CANCELLABLE"}
 	// ErrModuleUnavailable and ErrEngineUnavailable: an operator switched the
 	// task type or the LLM engine off; APIError.Message carries the reason.
 	// Nothing was charged. They are never retried: see Client.Capabilities.
@@ -61,6 +68,8 @@ var (
 	// JSRendering or a Premium proxy.
 	ErrBlocked = errors.New("datafuel: target blocked the request")
 )
+
+const codeStillProcessing = "TASK_STILL_PROCESSING"
 
 func newAPIError(status int, body []byte) *APIError {
 	e := &APIError{StatusCode: status}

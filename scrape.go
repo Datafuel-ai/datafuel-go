@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -37,7 +38,8 @@ type Proxy struct {
 	State   string    `json:"proxy_state,omitempty"`
 	ASN     string    `json:"proxy_asn,omitempty"`
 	// SessionID reuses the same exit across requests; TTL is its lifetime in
-	// seconds. Scrape and Map only.
+	// seconds. Sent on Scrape, Map, CreateJob, RunJob and crawls; a job or
+	// crawl shares the session across all of its tasks.
 	SessionID string `json:"-"`
 	TTL       int    `json:"-"`
 }
@@ -64,8 +66,11 @@ type ScrapeOptions struct {
 	JSRendering              bool   `json:"js_rendering,omitempty"`
 	WaitForSelector          string `json:"wait_for_selector,omitempty"`
 	WaitForSelectorTimeoutMs int    `json:"wait_for_selector_timeout_ms,omitempty"`
-	JSInstructions           any    `json:"js_instructions,omitempty"`
-	BlockResource            string `json:"block_resource,omitempty"`
+	// JSInstructions is a JSON object keyed by action, e.g.
+	// map[string]any{"wait_ms": 2000}. GET /config/js-instructions lists the
+	// actions. A JSON array is rejected with ErrInvalidAttributes.
+	JSInstructions any    `json:"js_instructions,omitempty"`
+	BlockResource  string `json:"block_resource,omitempty"`
 
 	// Markdown only. IncludeImages defaults to true on the API; point it at
 	// false to drop images and save tokens.
@@ -267,7 +272,9 @@ type ScrapeRequest struct {
 // Scrape fetches one URL and blocks until the result is ready. When the page
 // could not be scraped it returns the Result together with a *TaskError, so
 // `if err != nil` is enough and errors.Is(err, datafuel.ErrBlocked) tells
-// you why.
+// you why. When the API answers that the task is still processing, Scrape
+// re-sends the request with the same Idempotency-Key, which attaches to the
+// running task instead of starting a new one.
 func (c *Client) Scrape(ctx context.Context, req *ScrapeRequest) (*Result, error) {
 	if req == nil {
 		return nil, ErrNilRequest
@@ -295,27 +302,55 @@ func (c *Client) Markdown(ctx context.Context, pageURL string) (string, error) {
 // GetTask returns a task by ID, e.g. one created by a job or crawl. A task
 // that is still running comes back with Pending() true and no error.
 func (c *Client) GetTask(ctx context.Context, taskID string) (*Result, error) {
-	var out struct {
-		Result
-		Code string `json:"code"` // set on the 202 "still processing" answer
-	}
-	if err := c.do(ctx, request{method: http.MethodGet, path: "/task/" + url.PathEscape(taskID)}, &out); err != nil {
-		return nil, err
-	}
-	res := &out.Result
-	if out.Code == "TASK_STILL_PROCESSING" {
-		res.ID, res.Status = taskID, StatusProcessing
-	}
-	return res, res.Err()
-}
-
-func (c *Client) runTask(ctx context.Context, path string, body envelope, key string) (*Result, error) {
 	var res Result
-	err := c.do(ctx, request{method: http.MethodPost, path: path, body: body, idempotencyKey: keyOr(key)}, &res)
+	err := c.do(ctx, request{method: http.MethodGet, path: "/task/" + url.PathEscape(taskID)}, &res)
+	if errors.Is(err, ErrTaskStillProcessing) {
+		return &Result{ID: taskID, Status: StatusProcessing}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 	return &res, res.Err()
+}
+
+// WaitTask polls GetTask until the task is done or ctx ends. On error it
+// still returns the last result it saw, which may be nil.
+func (c *Client) WaitTask(ctx context.Context, taskID string) (*Result, error) {
+	var last *Result
+	for {
+		res, err := c.GetTask(ctx, taskID)
+		if res != nil {
+			last = res
+		}
+		if err != nil || !res.Pending() {
+			return last, err
+		}
+		if err := sleep(ctx, c.pollInterval); err != nil {
+			return last, err
+		}
+	}
+}
+
+func (c *Client) runTask(ctx context.Context, path string, body envelope, key string) (*Result, error) {
+	r := request{method: http.MethodPost, path: path, body: body, idempotencyKey: keyOr(key)}
+	var processing error
+	for {
+		var res Result
+		err := c.do(ctx, r, &res)
+		if err == nil {
+			return &res, res.Err()
+		}
+		if !errors.Is(err, ErrTaskStillProcessing) {
+			if processing != nil && ctx.Err() != nil {
+				return nil, fmt.Errorf("%w: %w", processing, err)
+			}
+			return nil, err
+		}
+		processing = err
+		if serr := sleep(ctx, c.pollInterval); serr != nil {
+			return nil, fmt.Errorf("%w: %w", err, serr)
+		}
+	}
 }
 
 // Engine is an AI assistant Ask can query. Engines can be switched off at
@@ -337,6 +372,7 @@ type AskRequest struct {
 	WebSearch      bool
 	FollowUp       string
 	Country        string
+	Location       string
 	Format         string
 	IdempotencyKey string
 }
@@ -348,6 +384,7 @@ func (r *AskRequest) attributes(target map[string]any) map[string]any {
 	}
 	setIf(target, "follow_up_prompt", r.FollowUp)
 	setIf(target, "proxy_country", r.Country)
+	setIf(target, "location", r.Location)
 	setIf(target, "result_format", r.Format)
 	return target
 }
