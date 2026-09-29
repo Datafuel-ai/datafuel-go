@@ -11,6 +11,8 @@
 //   - a list of known URLs         → [Client.RunJob]
 //   - a Google search              → [Client.Search]
 //   - a question for an AI engine  → [Client.Ask]
+//   - earlier jobs, tasks, usage   → [Client.ListJobs], [Client.ListTasks],
+//     [Client.Analytics], [Client.Transactions]
 //
 // Every write carries an Idempotency-Key (generated when you do not set one),
 // so the client can retry dropped connections and 429/5xx answers without
