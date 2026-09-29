@@ -86,3 +86,21 @@ func ExampleClient_RunJob() {
 		fmt.Println(task.FinalURL, task.Err())
 	}
 }
+
+func ExampleClient_Search() {
+	client := datafuel.New("df_key_...")
+
+	res, err := client.Search(context.Background(), &datafuel.SearchRequest{
+		Query:    "best crm",
+		Country:  "us",
+		Language: "en",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	var serp map[string]any
+	if err := res.Decode(&serp); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(len(serp), res.CreditsUsed)
+}

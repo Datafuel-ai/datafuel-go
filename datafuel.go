@@ -9,6 +9,7 @@
 //   - the URL list of a site       → [Client.Map]
 //   - many pages from a start URL  → [Client.Crawl]
 //   - a list of known URLs         → [Client.RunJob]
+//   - a Google search              → [Client.Search]
 //   - a question for an AI engine  → [Client.Ask]
 //
 // Every write carries an Idempotency-Key (generated when you do not set one),
@@ -36,7 +37,7 @@ const (
 	// DefaultBaseURL is the production API.
 	DefaultBaseURL = "https://scraping-api.datafuel.ai/api/v1"
 	// Version of this SDK, sent in the User-Agent.
-	Version = "0.1.1"
+	Version = "0.2.0"
 )
 
 // Client talks to the DataFuel API. It is safe for concurrent use.
@@ -182,6 +183,11 @@ func (c *Client) once(ctx context.Context, r request, target string, payload []b
 	if resp.StatusCode >= 400 {
 		retryAfter, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
 		return time.Duration(retryAfter) * time.Second, newAPIError(resp.StatusCode, data)
+	}
+	if resp.StatusCode == http.StatusAccepted {
+		if e := newAPIError(resp.StatusCode, data); e.Code == codeStillProcessing {
+			return 0, e
+		}
 	}
 	if out == nil || len(data) == 0 {
 		return 0, nil
