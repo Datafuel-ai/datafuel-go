@@ -657,3 +657,113 @@ func TestJobTargetSentinel(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestListJobsSendsFiltersAndDecodesThePage(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/job" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		if got := r.URL.RawQuery; got != "end_date=2026-09-30&limit=20&start_date=2026-09-01&status=completed&type=crawl" {
+			t.Errorf("query = %s", got)
+		}
+		io.WriteString(w, `{"jobs":[{"id":"job-1","type":"crawl","status":"completed","tasks_count":3,"tasks_done":3,"total_cost":3,"created_at":"2026-09-29T10:00:00Z","updated_at":"2026-09-29T10:04:31Z"}],"next_cursor":"c2"}`)
+	})
+	page, err := client.ListJobs(context.Background(), &ListOptions{
+		Status: StatusCompleted,
+		Type:   "crawl",
+		Start:  time.Date(2026, 9, 1, 23, 30, 0, 0, time.UTC),
+		End:    time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC),
+		Limit:  20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := page.Jobs[0]
+	if page.NextCursor != "c2" || job.ID != "job-1" || job.Type != "crawl" || !job.Status.Done() || job.TotalCost != 3 || job.CreatedAt.IsZero() {
+		t.Fatalf("page = %+v job = %+v", page, job)
+	}
+}
+
+func TestListTasksFiltersByJob(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/task" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		if got := r.URL.RawQuery; got != "cursor=c1&job_id=job-1&status=failed" {
+			t.Errorf("query = %s", got)
+		}
+		io.WriteString(w, `{"tasks":[{"id":"t1","job_id":"job-1","type":"unlocker","status":"failed","url":"https://a.test","credit_cost":1,"created_at":"2026-09-29T10:00:00Z","failed_at":"2026-09-29T10:00:04Z"},{"id":"t2","job_id":null,"type":"llm_scraping","status":"completed","credit_cost":100,"created_at":"2026-09-29T10:00:00Z"}]}`)
+	})
+	page, err := client.ListTasks(context.Background(), &ListTasksOptions{
+		ListOptions: ListOptions{Status: StatusFailed, Cursor: "c1"},
+		JobID:       "job-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.NextCursor != "" || len(page.Tasks) != 2 || page.Tasks[0].FailedAt == nil || page.Tasks[1].JobID != "" || page.Tasks[1].ProcessedAt != nil {
+		t.Fatalf("page = %+v", page)
+	}
+}
+
+func TestListWithNilOptionsSendsNoQuery(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery != "" {
+			t.Errorf("query = %s", r.URL.RawQuery)
+		}
+		io.WriteString(w, `{"tasks":[]}`)
+	})
+	if _, err := client.ListTasks(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTransactionsPagesAndSums(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/users/@me/transactions" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		if got := r.URL.RawQuery; got != "limit=50&operation=refund&page=2" {
+			t.Errorf("query = %s", got)
+		}
+		io.WriteString(w, `{"transactions":[{"id":7,"amount":100,"operation":"refund","reference_type":"task_id","reference_id":"t1","balance_after":4820,"created_at":"2026-09-29T09:58:40Z"}],"total_count":1,"sums":[{"operation":"refund","total":100,"count":1}]}`)
+	})
+	page, err := client.Transactions(context.Background(), &TransactionsOptions{Operation: "refund", Page: 2, Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := page.Transactions[0]
+	if tx.BalanceAfter == nil || *tx.BalanceAfter != 4820 || page.TotalCount != 1 || page.Sums[0].Total != 100 {
+		t.Fatalf("page = %+v", page)
+	}
+}
+
+func TestAnalyticsDecodesTheBreakdowns(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/task/analytics/dashboard" || r.URL.RawQuery != "interval=weekly&module=unlocker" {
+			t.Errorf("url = %s", r.URL)
+		}
+		io.WriteString(w, `{"summary":{"total_tasks":4,"avg_credits_per_request":2.5,"previous_period":{"credits_used":8,"credits_used_change":25}},"by_module":[{"module":"unlocker","total":4,"success_rate":75,"status_codes":[{"status_code":0,"count":1,"failed":1}]}],"by_status_code":[{"status_code":0,"count":1,"failed":1}]}`)
+	})
+	a, err := client.Analytics(context.Background(), &AnalyticsOptions{Interval: "weekly", Module: "unlocker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Summary.AvgCreditsPerRequest != 2.5 || a.Summary.PreviousPeriod == nil || a.Summary.PreviousPeriod.CreditsUsedChange != 25 {
+		t.Fatalf("summary = %+v", a.Summary)
+	}
+	if a.ByModule[0].SuccessRate != 75 || a.ByModule[0].Total != 4 || a.ByModule[0].StatusCodes[0].Failed != 1 || a.ByStatusCode[0].StatusCode != 0 {
+		t.Fatalf("analytics = %+v", a)
+	}
+}
+
+func TestInvalidQueryParamMatchesItsSentinel(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"code":"INVALID_QUERY_PARAM","message":"limit, page and job_id must be valid values"}`)
+	})
+	_, err := client.ListJobs(context.Background(), &ListOptions{Limit: 5})
+	if !errors.Is(err, ErrInvalidQueryParam) {
+		t.Fatalf("err = %v", err)
+	}
+}

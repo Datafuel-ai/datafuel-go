@@ -49,6 +49,9 @@ var (
 	ErrTaskStillProcessing        error = &APIError{Code: codeStillProcessing}
 	ErrJobRequiresMultipleTargets error = &APIError{Code: "JOB_REQUIRES_MULTIPLE_TARGETS"}
 	ErrJobNotCancellable          error = &APIError{Code: "JOB_NOT_CANCELLABLE"}
+	// ErrInvalidQueryParam is a list call with a negative or non-numeric
+	// limit or page, or a job ID that is not a UUID.
+	ErrInvalidQueryParam error = &APIError{Code: "INVALID_QUERY_PARAM"}
 	// ErrModuleUnavailable and ErrEngineUnavailable: an operator switched the
 	// task type or the LLM engine off; APIError.Message carries the reason.
 	// Nothing was charged. They are never retried: see Client.Capabilities.
