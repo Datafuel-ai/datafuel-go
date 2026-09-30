@@ -174,7 +174,7 @@ Do not put a short `Timeout` on the HTTP client: `Scrape` blocks until the page 
 DATAFUEL_API_KEY=df_key_... go run ./examples/quickstart https://example.com
 ```
 
-Full API reference: https://scraping-api.datafuel.ai/docs
+Full API reference and guides: https://docs.datafuel.ai
 
 ## License
 
