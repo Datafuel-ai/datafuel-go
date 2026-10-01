@@ -11,8 +11,25 @@ type Profile struct {
 	Username           string `json:"username"`
 	CurrentConcurrency int    `json:"current_concurrency"`
 	ConcurrencyLimit   int    `json:"concurrency_limit"`
-	CreditBalance      int    `json:"credit_balance"`
-	MonthlyCreditLimit int64  `json:"monthly_credit_limit"`
+	// CreditBalance is the total spendable credits: PlanCreditBalance plus
+	// PaygCreditBalance.
+	CreditBalance int `json:"credit_balance"`
+	// PlanCreditBalance is spent first and expires if the plan is not renewed.
+	PlanCreditBalance int `json:"plan_credit_balance"`
+	// PaygCreditBalance is spent after plan credits and never expires.
+	PaygCreditBalance  int   `json:"payg_credit_balance"`
+	MonthlyCreditLimit int64 `json:"monthly_credit_limit"`
+}
+
+// BalanceSplit is the remaining credits by pool. Plan credits are spent
+// first, roll over when the plan renews and expire if it is not renewed.
+// Pay-as-you-go credits come from credit packs, are spent after plan credits
+// and never expire.
+type BalanceSplit struct {
+	// Balance is the total spendable credits: Plan plus Payg.
+	Balance int `json:"balance"`
+	Plan    int `json:"plan_balance"`
+	Payg    int `json:"payg_balance"`
 }
 
 // Capability is one task type or LLM engine and whether it accepts new work.
@@ -51,13 +68,23 @@ func (c *Client) Capabilities(ctx context.Context) (*Capabilities, error) {
 	return &out, nil
 }
 
-// Balance returns the remaining credits.
+// Balance returns the remaining credits: plan and pay-as-you-go together.
 func (c *Client) Balance(ctx context.Context) (int, error) {
 	var out struct {
 		Balance int `json:"balance"`
 	}
 	err := c.do(ctx, request{method: http.MethodGet, path: "/users/@me/balance"}, &out)
 	return out.Balance, err
+}
+
+// BalanceSplit returns the remaining credits by pool: plan credits, spent
+// first, and pay-as-you-go credits.
+func (c *Client) BalanceSplit(ctx context.Context) (*BalanceSplit, error) {
+	var out BalanceSplit
+	if err := c.do(ctx, request{method: http.MethodGet, path: "/users/@me/balance"}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // Me returns the account profile.

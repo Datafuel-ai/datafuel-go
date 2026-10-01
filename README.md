@@ -138,6 +138,14 @@ history, err := client.Transactions(ctx, &datafuel.TransactionsOptions{Operation
 
 `ListJobs` and `ListTasks` run newest first; pass `NextCursor` back as `Cursor` until it is empty. Task items carry no result: call `GetTask` for it. `Start` and `End` are sent as UTC days and `End` is inclusive. `Transactions` pages with `Page` and `Limit`, and its `Sums` total each operation over the whole range. In `Analytics`, `StatusCode` 0 means the target never answered (timeout, DNS).
 
+```go
+credits, err := client.Balance(ctx)
+split, err := client.BalanceSplit(ctx)
+fmt.Println(split.Plan, split.Payg)
+```
+
+`Balance` is what you can spend. It is made of plan credits and pay-as-you-go credits. Plan credits are spent first; unused ones roll over when the plan renews and expire if it is not renewed. Pay-as-you-go credits come from one-time credit packs (a `purchase` transaction), are spent after plan credits and never expire. Each transaction's `PlanAmount` is the part of `Amount` that moved plan credits.
+
 ## Errors
 
 All work with `errors.Is` and `errors.As`.
