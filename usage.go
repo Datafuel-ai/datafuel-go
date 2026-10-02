@@ -144,9 +144,12 @@ type TransactionsOptions struct {
 // Transaction is one credit movement. Amount is negative for usage and
 // expiry.
 type Transaction struct {
-	ID        int64  `json:"id"`
-	Amount    int    `json:"amount"`
-	Operation string `json:"operation"`
+	ID     int64 `json:"id"`
+	Amount int   `json:"amount"`
+	// PlanAmount is the part of Amount that moved plan credits, same sign;
+	// the rest moved pay-as-you-go credits.
+	PlanAmount int    `json:"plan_amount"`
+	Operation  string `json:"operation"`
 	// ReferenceType says what ReferenceID points to, e.g. task_id or job_id.
 	ReferenceType string `json:"reference_type"`
 	ReferenceID   string `json:"reference_id"`
@@ -169,8 +172,8 @@ type TransactionsPage struct {
 	Sums         []TransactionSum `json:"sums"`
 }
 
-// Transactions returns one page of credit movements: purchases, usage,
-// refunds, expiry. Sums covers the whole range, not just the page.
+// Transactions returns one page of credit movements: plan assignments,
+// credit pack purchases, usage, refunds, expiry. Sums covers the whole range, not just the page.
 func (c *Client) Transactions(ctx context.Context, opts *TransactionsOptions) (*TransactionsPage, error) {
 	q := url.Values{}
 	if opts != nil {

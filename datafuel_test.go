@@ -305,6 +305,38 @@ func TestBalance(t *testing.T) {
 	}
 }
 
+func TestBalanceSplit(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/users/@me/balance" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		io.WriteString(w, `{"balance":4200,"plan_balance":3200,"payg_balance":1000}`)
+	})
+	got, err := client.BalanceSplit(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *got != (BalanceSplit{Balance: 4200, Plan: 3200, Payg: 1000}) {
+		t.Fatalf("split = %+v", *got)
+	}
+}
+
+func TestMeReadsTheCreditPools(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/users/@me" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		io.WriteString(w, `{"email":"a@b.test","credit_balance":4200,"plan_credit_balance":3200,"payg_credit_balance":1000}`)
+	})
+	me, err := client.Me(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if me.CreditBalance != 4200 || me.PlanCreditBalance != 3200 || me.PaygCreditBalance != 1000 {
+		t.Fatalf("profile = %+v", *me)
+	}
+}
+
 func TestCancelledIsTerminal(t *testing.T) {
 	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"status":"cancelled","stop_reason":"cancelled"}`)
@@ -726,13 +758,16 @@ func TestTransactionsPagesAndSums(t *testing.T) {
 		if got := r.URL.RawQuery; got != "limit=50&operation=refund&page=2" {
 			t.Errorf("query = %s", got)
 		}
-		io.WriteString(w, `{"transactions":[{"id":7,"amount":100,"operation":"refund","reference_type":"task_id","reference_id":"t1","balance_after":4820,"created_at":"2026-09-29T09:58:40Z"}],"total_count":1,"sums":[{"operation":"refund","total":100,"count":1}]}`)
+		io.WriteString(w, `{"transactions":[{"id":7,"amount":100,"plan_amount":60,"operation":"refund","reference_type":"task_id","reference_id":"t1","balance_after":4820,"created_at":"2026-09-29T09:58:40Z"}],"total_count":1,"sums":[{"operation":"refund","total":100,"count":1}]}`)
 	})
 	page, err := client.Transactions(context.Background(), &TransactionsOptions{Operation: "refund", Page: 2, Limit: 50})
 	if err != nil {
 		t.Fatal(err)
 	}
 	tx := page.Transactions[0]
+	if tx.PlanAmount != 60 {
+		t.Fatalf("plan amount = %d", tx.PlanAmount)
+	}
 	if tx.BalanceAfter == nil || *tx.BalanceAfter != 4820 || page.TotalCount != 1 || page.Sums[0].Total != 100 {
 		t.Fatalf("page = %+v", page)
 	}
