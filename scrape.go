@@ -66,11 +66,17 @@ type ScrapeOptions struct {
 	JSRendering              bool   `json:"js_rendering,omitempty"`
 	WaitForSelector          string `json:"wait_for_selector,omitempty"`
 	WaitForSelectorTimeoutMs int    `json:"wait_for_selector_timeout_ms,omitempty"`
-	// JSInstructions is a JSON object keyed by action, e.g.
-	// map[string]any{"wait_ms": 2000}. GET /config/js-instructions lists the
-	// actions. A JSON array is rejected with ErrInvalidAttributes.
-	JSInstructions any    `json:"js_instructions,omitempty"`
-	BlockResource  string `json:"block_resource,omitempty"`
+	// JSInstructions are browser actions run after load, in order: a slice
+	// of single-action maps, e.g. []map[string]any{{"click": "#more"},
+	// {"wait_ms": 1000}, {"click": "#more"}}. An action may repeat. The older
+	// form, one map keyed by action, is still accepted, but its order is not
+	// guaranteed and an action cannot repeat. Client.JSInstructions lists the
+	// actions. Needs JSRendering.
+	JSInstructions any `json:"js_instructions,omitempty"`
+	// BlockResource names one resource type the browser must not load, e.g.
+	// "Image". BlockResources names several and wins when both are set.
+	BlockResource  string   `json:"block_resource,omitempty"`
+	BlockResources []string `json:"-"`
 
 	// Markdown only. IncludeImages defaults to true on the API; point it at
 	// false to drop images and save tokens.
@@ -101,12 +107,15 @@ type ScrapeOptions struct {
 }
 
 // AIOptions turns the page into structured data with your own LLM key.
+// Provider is required: without it the API answers ErrInvalidAttributes.
 type AIOptions struct {
 	Prompt   string // what to extract
 	Format   any    // example JSON object (struct or map) the output must follow
-	Provider string // openai, anthropic, google
-	Model    string
-	APIKey   string
+	Provider string // one of the providers Client.AIProviders lists
+	// Model is one of the models Client.AIProviders lists for Provider.
+	// Leave it empty for the provider's default.
+	Model  string
+	APIKey string
 }
 
 // attributes flattens the options into the API's attributes object and adds
@@ -130,6 +139,9 @@ func (o ScrapeOptions) attributes(extra map[string]any) (map[string]any, error) 
 			return nil, fmt.Errorf("datafuel: encode %s: %w", key, err)
 		}
 		attrs[key] = string(encoded)
+	}
+	if len(o.BlockResources) > 0 {
+		attrs["block_resource"] = o.BlockResources
 	}
 	if ai := o.AI; ai != nil {
 		attrs["result_use_ai"] = true

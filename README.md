@@ -24,6 +24,8 @@ markdown, err := client.Markdown(ctx, "https://example.com")
 | A question for an AI engine | `Ask`, or `CreateAskJob` for two or more prompts | `Ask` does |
 | A task ID from a job or crawl | `GetTask` / `WaitTask` | `WaitTask` does |
 | Earlier jobs, tasks, usage | `ListJobs` / `ListTasks` / `Analytics` / `Transactions` | yes |
+| What a request may contain | `JSInstructions` / `AIProviders` / `ProxyLocations` / `ProxyASNs` / `Capabilities` | yes |
+| The anti-bot wall in front of a URL | `CheckProtection` | yes |
 
 Start with plain `Scrape`. Turn on `JSRendering` only when the page comes back empty: it is slower and costs five times the credits on a Basic proxy. `Map` a section before you `Crawl` it, it costs one credit and tells you how big it is.
 
@@ -57,6 +59,24 @@ err = res.Decode(&fields)
 | `CreditsUsed` | Charged for this task, 0 when it failed. |
 
 `res.Text()` returns html or markdown, `res.Decode(&v)` structured output, `res.Image()` screenshot bytes.
+
+With `JSRendering`, `JSInstructions` runs browser actions before the capture. Pass a slice of single-action maps: they run in the order you list them and an action can repeat. `BlockResources` skips resource types you do not need (`BlockResource` takes a single one).
+
+```go
+ScrapeOptions: datafuel.ScrapeOptions{
+    JSRendering: true,
+    JSInstructions: []map[string]any{
+        {"fill": []string{"input[name=q]", "laptops"}},
+        {"click": "button[type=submit]"},
+        {"wait_ms": 1000},
+    },
+    BlockResources: []string{"Image", "Font", "Media"},
+},
+```
+
+The older form, one map keyed by action, still works, but its order is not guaranteed and an action cannot repeat. `client.JSInstructions(ctx)` lists the actions.
+
+`AI: &datafuel.AIOptions{Prompt: ..., Provider: "openai", APIKey: ...}` post-processes the page with an LLM. `Provider` is required, `Model` is optional and must be one of those `client.AIProviders(ctx)` lists. Crawls reject `AI`.
 
 ## Crawl
 
@@ -111,7 +131,7 @@ var serp map[string]any
 err = res.Decode(&serp)
 ```
 
-Results are JSON unless you set `Format` to `FormatHTML` or `FormatMarkdown`. `Location`, `UULE` and `Lat`/`Lon` are mutually exclusive.
+Results are JSON unless you set `Format` to `FormatHTML` or `FormatMarkdown`. `Location`, `UULE` and `Lat`/`Lon` are mutually exclusive. Searches leave through DataFuel's own pool: pick the market with `Country` and `Language`; `ProxyCountry` is accepted but not used yet.
 
 ## Map
 
@@ -145,6 +165,18 @@ fmt.Println(split.Plan, split.Payg)
 ```
 
 `Balance` is what you can spend. It is made of plan credits and pay-as-you-go credits. Plan credits are spent first; unused ones roll over when the plan renews and expire if it is not renewed. Pay-as-you-go credits come from one-time credit packs (a `purchase` transaction), are spent after plan credits and never expire. Each transaction's `PlanAmount` is the part of `Amount` that moved plan credits.
+
+## Account and config
+
+```go
+caps, err := client.Capabilities(ctx)                         // which task types and LLM engines are on
+actions, err := client.JSInstructions(ctx)                    // browser actions JSInstructions accepts
+providers, err := client.AIProviders(ctx)                     // providers and models AIOptions accepts
+countries, err := client.ProxyLocations(ctx, datafuel.ProxyPremium) // countries, regions, cities
+asns, err := client.ProxyASNs(ctx, "US", datafuel.ProxyPremium)
+checks, err := client.CheckProtection(ctx, []string{"https://shop.example.com/"}) // anti-bot vendor per URL, nothing scraped
+health, err := client.Health(ctx, true)                       // health.OK() is false while a dependency is down
+```
 
 ## Errors
 
@@ -182,7 +214,7 @@ Do not put a short `Timeout` on the HTTP client: `Scrape` blocks until the page 
 DATAFUEL_API_KEY=df_key_... go run ./examples/quickstart https://example.com
 ```
 
-Full API reference: https://scraping-api.datafuel.ai/docs
+Guides and the full API reference: https://docs.datafuel.ai
 
 ## License
 

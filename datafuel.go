@@ -13,6 +13,8 @@
 //   - a question for an AI engine  → [Client.Ask]
 //   - earlier jobs, tasks, usage   → [Client.ListJobs], [Client.ListTasks],
 //     [Client.Analytics], [Client.Transactions]
+//   - what a request may contain   → [Client.JSInstructions],
+//     [Client.AIProviders], [Client.ProxyLocations], [Client.ProxyASNs]
 //
 // Every write carries an Idempotency-Key (generated when you do not set one),
 // so the client can retry dropped connections and 429/5xx answers without
@@ -39,7 +41,7 @@ const (
 	// DefaultBaseURL is the production API.
 	DefaultBaseURL = "https://scraping-api.datafuel.ai/api/v1"
 	// Version of this SDK, sent in the User-Agent.
-	Version = "0.3.0"
+	Version = "0.4.0"
 )
 
 // Client talks to the DataFuel API. It is safe for concurrent use.
@@ -118,6 +120,8 @@ type request struct {
 	body   any
 	// idempotencyKey makes a POST safe to retry; GETs always are.
 	idempotencyKey string
+	// degradedOK decodes a 503 body into out instead of returning an error.
+	degradedOK bool
 }
 
 func (c *Client) do(ctx context.Context, r request, out any) error {
@@ -181,6 +185,9 @@ func (c *Client) once(ctx context.Context, r request, target string, payload []b
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return 0, &transportError{err}
+	}
+	if r.degradedOK && resp.StatusCode == http.StatusServiceUnavailable && json.Unmarshal(data, out) == nil {
+		return 0, nil
 	}
 	if resp.StatusCode >= 400 {
 		retryAfter, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
