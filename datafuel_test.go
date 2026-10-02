@@ -75,7 +75,7 @@ func TestScrapeSendsEnvelopeAndDecodesResult(t *testing.T) {
 		ScrapeOptions: ScrapeOptions{
 			Format: FormatMarkdown, JSRendering: true, IncludeImages: &noImages,
 			Extract: map[string]string{"title": "h1"},
-			AI:      &AIOptions{Prompt: "list prices"},
+			AI:      &AIOptions{Prompt: "list prices", Provider: "openai"},
 		},
 	})
 	if err != nil {
@@ -800,5 +800,87 @@ func TestInvalidQueryParamMatchesItsSentinel(t *testing.T) {
 	_, err := client.ListJobs(context.Background(), &ListOptions{Limit: 5})
 	if !errors.Is(err, ErrInvalidQueryParam) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestForbiddenAndAlreadyExistsSentinels(t *testing.T) {
+	for code, sentinel := range map[string]error{
+		"FORBIDDEN":           ErrForbidden,
+		"TASK_ALREADY_EXISTS": ErrTaskAlreadyExists,
+		"JOB_ALREADY_EXISTS":  ErrJobAlreadyExists,
+	} {
+		status := http.StatusConflict
+		if code == "FORBIDDEN" {
+			status = http.StatusForbidden
+		}
+		err := newAPIError(status, []byte(`{"code":"`+code+`","message":"nope"}`))
+		if !errors.Is(err, sentinel) {
+			t.Errorf("%s does not match its sentinel", code)
+		}
+	}
+}
+
+func TestCancelIsRetried(t *testing.T) {
+	var calls atomic.Int32
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			io.WriteString(w, `{"code":"INTERNAL_ERROR","message":"try again"}`)
+			return
+		}
+		io.WriteString(w, `{"status":"cancelled","refunded_tasks":2}`)
+	})
+	res, err := client.CancelJob(context.Background(), "j1")
+	if err != nil || res.RefundedTasks != 2 || calls.Load() != 2 {
+		t.Fatalf("res=%+v err=%v calls=%d", res, err, calls.Load())
+	}
+}
+
+func TestRunAskAndSearchJobs(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/job":
+			body := readBody(t, r)
+			attrs := body["attributes"].(map[string]any)
+			if body["type"] == "llm_scraping" && attrs["prompts"] == nil || body["type"] == "serp" && attrs["queries"] == nil {
+				t.Errorf("body = %v", body)
+			}
+			io.WriteString(w, `{"id":"j-`+body["type"].(string)+`"}`)
+		case r.URL.Path == "/job/j-llm_scraping" || r.URL.Path == "/job/j-serp":
+			io.WriteString(w, `{"status":"completed","tasks_count":2}`)
+		default:
+			io.WriteString(w, `{"tasks_count":2,"tasks_result":[{"status":"completed","result":{"data":"a"}}]}`)
+		}
+	})
+	ask, err := client.RunAskJob(context.Background(), &AskJobRequest{Prompts: []string{"a", "b"}, AskRequest: AskRequest{Engine: EnginePerplexity}})
+	if err != nil || ask.ID != "j-llm_scraping" || len(ask.Tasks) != 1 {
+		t.Fatalf("ask=%+v err=%v", ask, err)
+	}
+	search, err := client.RunSearchJob(context.Background(), &SearchJobRequest{Queries: []string{"a", "b"}})
+	if err != nil || search.ID != "j-serp" || len(search.Tasks) != 1 {
+		t.Fatalf("search=%+v err=%v", search, err)
+	}
+}
+
+func TestModuleEnabled(t *testing.T) {
+	caps := &Capabilities{Modules: []Capability{{Name: "serp", Enabled: true}, {Name: "crawl"}}}
+	if !caps.ModuleEnabled("serp") || caps.ModuleEnabled("crawl") || caps.ModuleEnabled("nope") {
+		t.Fatalf("caps = %+v", caps)
+	}
+}
+
+func TestAIOptionsAreCheckedBeforeSending(t *testing.T) {
+	var calls atomic.Int32
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) { calls.Add(1) })
+	ctx := context.Background()
+	if _, err := client.Scrape(ctx, &ScrapeRequest{URL: "https://a.io", ScrapeOptions: ScrapeOptions{AI: &AIOptions{Prompt: "x"}}}); err == nil {
+		t.Error("AI without a Provider must fail")
+	}
+	crawlAI := ScrapeOptions{AI: &AIOptions{Provider: "openai"}}
+	if _, err := client.StartCrawl(ctx, &CrawlRequest{URL: "https://a.io", ScrapeOptions: crawlAI}); err == nil {
+		t.Error("a crawl with AI must fail")
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("invalid options must not reach the API, got %d calls", calls.Load())
 	}
 }
