@@ -111,7 +111,7 @@ type ScrapeOptions struct {
 type AIOptions struct {
 	Prompt   string // what to extract
 	Format   any    // example JSON object (struct or map) the output must follow
-	Provider string // openai, anthropic, google
+	Provider string // one of the providers Client.AIProviders lists
 	// Model is one of the models Client.AIProviders lists for Provider.
 	// Leave it empty for the provider's default.
 	Model  string
