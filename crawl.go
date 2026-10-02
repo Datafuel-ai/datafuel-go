@@ -2,6 +2,7 @@ package datafuel
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"net/http"
 	"net/url"
@@ -68,6 +69,9 @@ type CrawlResultsPage struct {
 func (c *Client) StartCrawl(ctx context.Context, req *CrawlRequest) (string, error) {
 	if req == nil {
 		return "", ErrNilRequest
+	}
+	if req.AI != nil {
+		return "", errors.New("datafuel: crawls do not support AI: the API rejects result_use_ai on crawls")
 	}
 	extra := map[string]any{"url": req.URL}
 	if req.MaxPages > 0 {
