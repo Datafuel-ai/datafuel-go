@@ -32,7 +32,8 @@ type SearchRequest struct {
 	LSig    string `json:"lsig,omitempty"`
 	IBP     string `json:"ibp,omitempty"`
 
-	// ProxyCountry defaults to Country.
+	// ProxyCountry is accepted but not used yet: searches leave through
+	// DataFuel's own pool. Target a market with Country and Language.
 	ProxyCountry string `json:"proxy_country,omitempty"`
 	// Format is FormatJSON (default), FormatHTML or FormatMarkdown.
 	Format Format `json:"result_format,omitempty"`
