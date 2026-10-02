@@ -120,6 +120,9 @@ type request struct {
 	body   any
 	// idempotencyKey makes a POST safe to retry; GETs always are.
 	idempotencyKey string
+	// idempotent marks a write the API treats as a no-op when repeated,
+	// e.g. a cancel, so it is safe to retry too.
+	idempotent bool
 	// degradedOK decodes a 503 body into out instead of returning an error.
 	degradedOK bool
 }
@@ -139,7 +142,7 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 	if len(r.query) > 0 {
 		target += "?" + r.query.Encode()
 	}
-	retryable := r.method == http.MethodGet || r.idempotencyKey != ""
+	retryable := r.method == http.MethodGet || r.idempotencyKey != "" || r.idempotent
 
 	var lastErr error
 	for attempt := 0; ; attempt++ {

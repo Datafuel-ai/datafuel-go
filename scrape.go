@@ -144,6 +144,9 @@ func (o ScrapeOptions) attributes(extra map[string]any) (map[string]any, error) 
 		attrs["block_resource"] = o.BlockResources
 	}
 	if ai := o.AI; ai != nil {
+		if ai.Provider == "" {
+			return nil, errors.New("datafuel: AI needs a Provider; Client.AIProviders lists them")
+		}
 		attrs["result_use_ai"] = true
 		setIf(attrs, "result_ai_prompt", ai.Prompt)
 		setIf(attrs, "ai_provider", ai.Provider)
