@@ -45,8 +45,8 @@ type Capabilities struct {
 	Engines []Capability `json:"engines"`
 }
 
-// ModuleEnabled reports whether a task type (unlocker, llm_scraping, serp,
-// map, crawl) accepts work. Unknown modules report false.
+// ModuleEnabled reports whether a task type (unlocker, llm_scraping,
+// duckduckgo, serp, map, crawl) accepts work. Unknown modules report false.
 func (c *Capabilities) ModuleEnabled(module string) bool {
 	for _, m := range c.Modules {
 		if m.Name == module {

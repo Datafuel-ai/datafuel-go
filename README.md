@@ -22,6 +22,7 @@ markdown, err := client.Markdown(ctx, "https://example.com")
 | A list of known URLs | `RunJob`, or `CreateJob` + `WaitJob` + `JobResults` | `RunJob` does |
 | A Google search | `Search`, or `RunSearchJob` / `CreateSearchJob` for two or more queries | `Search` and `RunSearchJob` do |
 | A question for an AI engine | `Ask`, or `RunAskJob` / `CreateAskJob` for two or more prompts | `Ask` and `RunAskJob` do |
+| A question for duck.ai | `DuckDuckGo`, or `RunDuckDuckGoJob` / `CreateDuckDuckGoJob` for two or more prompts | `DuckDuckGo` and `RunDuckDuckGoJob` do |
 | A task ID from a job or crawl | `GetTask` / `WaitTask` | `WaitTask` does |
 | Earlier jobs, tasks, usage | `ListJobs` / `ListTasks` / `Analytics` / `Transactions` | yes |
 | What a request may contain | `JSInstructions` / `AIProviders` / `ProxyLocations` / `ProxyASNs` / `Capabilities` | yes |
@@ -140,6 +141,19 @@ err = res.Decode(&answer) // the engine's answer and its sources
 
 Engines can be switched off at runtime; `client.Capabilities(ctx)` says which are on. Other fields: `FollowUp` (a second prompt in the same conversation), `Country` (exit country) and `Location` (where the engine should answer for). `RunAskJob` sends two or more prompts as one job.
 
+## DuckDuckGo AI
+
+```go
+res, err := client.DuckDuckGo(ctx, &datafuel.DuckDuckGoRequest{Prompt: "best crm", Model: "claude-haiku-4-5"})
+var answer struct {
+    Text      string           `json:"text"` // citation markers read [n]
+    Citations []map[string]any `json:"citations"`
+}
+err = res.Decode(&answer)
+```
+
+A flat price per prompt, whatever the model. `Model` is `gpt-6-luna` (default), `gpt-5.4-mini`, `claude-haiku-4-5`, `mistral-small-2603`, `tinfoil/gpt-oss-120b` or `tinfoil/gemma4-31b`. `Country` is the exit country; duck.ai answers location questions for it. `RunDuckDuckGoJob` sends two or more prompts as one job.
+
 ## Search
 
 ```go
@@ -201,7 +215,7 @@ All work with `errors.Is` and `errors.As`.
 
 - `datafuel.ErrNoAPIKey`: no key was passed and `DATAFUEL_API_KEY` is empty. Returned before any request.
 - `*datafuel.APIError`: the API refused the request. Sentinels: `ErrUnauthorized`, `ErrForbidden`, `ErrInsufficientCredits`, `ErrRateLimited`, `ErrNotFound`, `ErrInvalidAttributes`, `ErrIdempotencyKeyReused`, `ErrJobRequiresMultipleTargets`, `ErrJobNotCancellable`, `ErrInvalidQueryParam`, `ErrTaskAlreadyExists` / `ErrJobAlreadyExists` (a create collided with an existing task or job; nothing was charged, send it again).
-- `ErrTaskStillProcessing`: the API answered 202, the task has not finished. `Scrape`, `Map`, `Search` and `Ask` handle it by re-sending with the same `Idempotency-Key` until the task is done, so you only see it, together with the context error, when your context ends first. Send the request again with the same `IdempotencyKey` to pick the task up.
+- `ErrTaskStillProcessing`: the API answered 202, the task has not finished. `Scrape`, `Map`, `Search`, `Ask` and `DuckDuckGo` handle it by re-sending with the same `Idempotency-Key` until the task is done, so you only see it, together with the context error, when your context ends first. Send the request again with the same `IdempotencyKey` to pick the task up.
 - `ErrModuleUnavailable`, `ErrEngineUnavailable`: an operator switched a task type or LLM engine off, e.g. during a provider outage. The reason is in the error message, nothing is charged, and the SDK does not retry. `client.Capabilities(ctx)` lists what is on.
 - `*datafuel.TaskError`: the API accepted the task but the page could not be scraped. Matches `ErrTaskFailed`, and `ErrBlocked` when the target refused. The `Result` is returned together with the error. Failed tasks are refunded.
 

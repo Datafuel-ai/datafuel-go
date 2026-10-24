@@ -862,6 +862,53 @@ func TestRunAskAndSearchJobs(t *testing.T) {
 	}
 }
 
+func TestDuckDuckGoSendsAttributes(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/task" || r.Header.Get("Idempotency-Key") == "" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		body := readBody(t, r)
+		attrs := body["attributes"].(map[string]any)
+		if body["type"] != "duckduckgo" || attrs["prompt"] != "best crm" || attrs["model"] != "claude-haiku-4-5" ||
+			attrs["proxy_country"] != "us" || len(attrs) != 3 {
+			t.Errorf("body = %v", body)
+		}
+		io.WriteString(w, `{"id":"d1","status":"completed","credits_used":50,"result":{"data":{"text":"HubSpot [1]"}}}`)
+	})
+	res, err := client.DuckDuckGo(context.Background(), &DuckDuckGoRequest{Prompt: "best crm", Model: "claude-haiku-4-5", Country: "us"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct{ Text string }
+	if err := res.Decode(&out); err != nil || out.Text != "HubSpot [1]" {
+		t.Fatalf("decode: %+v %v", out, err)
+	}
+}
+
+func TestCreateDuckDuckGoJobSendsPrompts(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		body := readBody(t, r)
+		attrs := body["attributes"].(map[string]any)
+		if r.URL.Path != "/job" || body["type"] != "duckduckgo" || body["multithreaded"] != false || attrs["model"] != "gpt-5.4-mini" {
+			t.Errorf("%s body = %v", r.URL.Path, body)
+		}
+		if ps := attrs["prompts"].([]any); len(ps) != 2 {
+			t.Errorf("prompts = %v", ps)
+		}
+		if _, ok := attrs["prompt"]; ok {
+			t.Errorf("a job must not send prompt: %v", attrs)
+		}
+		io.WriteString(w, `{"id":"j3"}`)
+	})
+	id, err := client.CreateDuckDuckGoJob(context.Background(), &DuckDuckGoJobRequest{
+		Prompts: []string{"a", "b"}, Sequential: true,
+		DuckDuckGoRequest: DuckDuckGoRequest{Prompt: "ignored", Model: "gpt-5.4-mini"},
+	})
+	if err != nil || id != "j3" {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+}
+
 func TestModuleEnabled(t *testing.T) {
 	caps := &Capabilities{Modules: []Capability{{Name: "serp", Enabled: true}, {Name: "crawl"}}}
 	if !caps.ModuleEnabled("serp") || caps.ModuleEnabled("crawl") || caps.ModuleEnabled("nope") {

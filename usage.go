@@ -13,7 +13,8 @@ const dateLayout = "2006-01-02"
 // ListOptions filters ListJobs and ListTasks. Zero values are not sent.
 type ListOptions struct {
 	Status Status
-	// Type is a task type: unlocker, llm_scraping, serp, map, or crawl.
+	// Type is a task type: unlocker, llm_scraping, duckduckgo, serp, map, or
+	// crawl.
 	Type string
 	// Start and End bound the creation day in UTC; End is inclusive.
 	Start time.Time
@@ -97,7 +98,7 @@ type TaskSummary struct {
 	JobID  string `json:"job_id"`
 	Type   string `json:"type"`
 	Status Status `json:"status"`
-	// URL is empty for llm_scraping and serp.
+	// URL is empty for llm_scraping, duckduckgo and serp.
 	URL string `json:"url"`
 	// CreditCost is charged when the task is queued; a failed task is refunded.
 	CreditCost  int        `json:"credit_cost"`
