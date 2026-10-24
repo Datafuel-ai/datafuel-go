@@ -75,7 +75,7 @@ func TestScrapeSendsEnvelopeAndDecodesResult(t *testing.T) {
 		ScrapeOptions: ScrapeOptions{
 			Format: FormatMarkdown, JSRendering: true, IncludeImages: &noImages,
 			Extract: map[string]string{"title": "h1"},
-			AI:      &AIOptions{Prompt: "list prices"},
+			AI:      &AIOptions{Prompt: "list prices", Provider: "openai"},
 		},
 	})
 	if err != nil {
@@ -800,5 +800,134 @@ func TestInvalidQueryParamMatchesItsSentinel(t *testing.T) {
 	_, err := client.ListJobs(context.Background(), &ListOptions{Limit: 5})
 	if !errors.Is(err, ErrInvalidQueryParam) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestForbiddenAndAlreadyExistsSentinels(t *testing.T) {
+	for code, sentinel := range map[string]error{
+		"FORBIDDEN":           ErrForbidden,
+		"TASK_ALREADY_EXISTS": ErrTaskAlreadyExists,
+		"JOB_ALREADY_EXISTS":  ErrJobAlreadyExists,
+	} {
+		status := http.StatusConflict
+		if code == "FORBIDDEN" {
+			status = http.StatusForbidden
+		}
+		err := newAPIError(status, []byte(`{"code":"`+code+`","message":"nope"}`))
+		if !errors.Is(err, sentinel) {
+			t.Errorf("%s does not match its sentinel", code)
+		}
+	}
+}
+
+func TestCancelIsRetried(t *testing.T) {
+	var calls atomic.Int32
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			io.WriteString(w, `{"code":"INTERNAL_ERROR","message":"try again"}`)
+			return
+		}
+		io.WriteString(w, `{"status":"cancelled","refunded_tasks":2}`)
+	})
+	res, err := client.CancelJob(context.Background(), "j1")
+	if err != nil || res.RefundedTasks != 2 || calls.Load() != 2 {
+		t.Fatalf("res=%+v err=%v calls=%d", res, err, calls.Load())
+	}
+}
+
+func TestRunAskAndSearchJobs(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/job":
+			body := readBody(t, r)
+			attrs := body["attributes"].(map[string]any)
+			if body["type"] == "llm_scraping" && attrs["prompts"] == nil || body["type"] == "serp" && attrs["queries"] == nil {
+				t.Errorf("body = %v", body)
+			}
+			io.WriteString(w, `{"id":"j-`+body["type"].(string)+`"}`)
+		case r.URL.Path == "/job/j-llm_scraping" || r.URL.Path == "/job/j-serp":
+			io.WriteString(w, `{"status":"completed","tasks_count":2}`)
+		default:
+			io.WriteString(w, `{"tasks_count":2,"tasks_result":[{"status":"completed","result":{"data":"a"}}]}`)
+		}
+	})
+	ask, err := client.RunAskJob(context.Background(), &AskJobRequest{Prompts: []string{"a", "b"}, AskRequest: AskRequest{Engine: EnginePerplexity}})
+	if err != nil || ask.ID != "j-llm_scraping" || len(ask.Tasks) != 1 {
+		t.Fatalf("ask=%+v err=%v", ask, err)
+	}
+	search, err := client.RunSearchJob(context.Background(), &SearchJobRequest{Queries: []string{"a", "b"}})
+	if err != nil || search.ID != "j-serp" || len(search.Tasks) != 1 {
+		t.Fatalf("search=%+v err=%v", search, err)
+	}
+}
+
+func TestDuckDuckGoSendsAttributes(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/task" || r.Header.Get("Idempotency-Key") == "" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		body := readBody(t, r)
+		attrs := body["attributes"].(map[string]any)
+		if body["type"] != "duckduckgo" || attrs["prompt"] != "best crm" || attrs["model"] != "claude-haiku-4-5" ||
+			attrs["proxy_country"] != "us" || len(attrs) != 3 {
+			t.Errorf("body = %v", body)
+		}
+		io.WriteString(w, `{"id":"d1","status":"completed","credits_used":50,"result":{"data":{"text":"HubSpot [1]"}}}`)
+	})
+	res, err := client.DuckDuckGo(context.Background(), &DuckDuckGoRequest{Prompt: "best crm", Model: "claude-haiku-4-5", Country: "us"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct{ Text string }
+	if err := res.Decode(&out); err != nil || out.Text != "HubSpot [1]" {
+		t.Fatalf("decode: %+v %v", out, err)
+	}
+}
+
+func TestCreateDuckDuckGoJobSendsPrompts(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		body := readBody(t, r)
+		attrs := body["attributes"].(map[string]any)
+		if r.URL.Path != "/job" || body["type"] != "duckduckgo" || body["multithreaded"] != false || attrs["model"] != "gpt-5.4-mini" {
+			t.Errorf("%s body = %v", r.URL.Path, body)
+		}
+		if ps := attrs["prompts"].([]any); len(ps) != 2 {
+			t.Errorf("prompts = %v", ps)
+		}
+		if _, ok := attrs["prompt"]; ok {
+			t.Errorf("a job must not send prompt: %v", attrs)
+		}
+		io.WriteString(w, `{"id":"j3"}`)
+	})
+	id, err := client.CreateDuckDuckGoJob(context.Background(), &DuckDuckGoJobRequest{
+		Prompts: []string{"a", "b"}, Sequential: true,
+		DuckDuckGoRequest: DuckDuckGoRequest{Prompt: "ignored", Model: "gpt-5.4-mini"},
+	})
+	if err != nil || id != "j3" {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+}
+
+func TestModuleEnabled(t *testing.T) {
+	caps := &Capabilities{Modules: []Capability{{Name: "serp", Enabled: true}, {Name: "crawl"}}}
+	if !caps.ModuleEnabled("serp") || caps.ModuleEnabled("crawl") || caps.ModuleEnabled("nope") {
+		t.Fatalf("caps = %+v", caps)
+	}
+}
+
+func TestAIOptionsAreCheckedBeforeSending(t *testing.T) {
+	var calls atomic.Int32
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) { calls.Add(1) })
+	ctx := context.Background()
+	if _, err := client.Scrape(ctx, &ScrapeRequest{URL: "https://a.io", ScrapeOptions: ScrapeOptions{AI: &AIOptions{Prompt: "x"}}}); err == nil {
+		t.Error("AI without a Provider must fail")
+	}
+	crawlAI := ScrapeOptions{AI: &AIOptions{Provider: "openai"}}
+	if _, err := client.StartCrawl(ctx, &CrawlRequest{URL: "https://a.io", ScrapeOptions: crawlAI}); err == nil {
+		t.Error("a crawl with AI must fail")
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("invalid options must not reach the API, got %d calls", calls.Load())
 	}
 }

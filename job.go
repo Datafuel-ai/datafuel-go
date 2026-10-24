@@ -110,7 +110,7 @@ func (c *Client) CancelJob(ctx context.Context, jobID string) (*CancelResult, er
 
 func (c *Client) cancel(ctx context.Context, path string) (*CancelResult, error) {
 	var out CancelResult
-	if err := c.do(ctx, request{method: http.MethodPost, path: path}, &out); err != nil {
+	if err := c.do(ctx, request{method: http.MethodPost, path: path, idempotent: true}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -139,6 +139,24 @@ func (c *Client) WaitJob(ctx context.Context, jobID string) (*JobStatus, error) 
 // keeps running and billing) can be picked up again with JobResults.
 func (c *Client) RunJob(ctx context.Context, req *JobRequest) (*JobResults, error) {
 	id, err := c.CreateJob(ctx, req)
+	return c.finishJob(ctx, id, err)
+}
+
+// RunAskJob creates a prompt job, waits for it and returns its results, like
+// RunJob.
+func (c *Client) RunAskJob(ctx context.Context, req *AskJobRequest) (*JobResults, error) {
+	id, err := c.CreateAskJob(ctx, req)
+	return c.finishJob(ctx, id, err)
+}
+
+// RunSearchJob creates a search job, waits for it and returns its results,
+// like RunJob.
+func (c *Client) RunSearchJob(ctx context.Context, req *SearchJobRequest) (*JobResults, error) {
+	id, err := c.CreateSearchJob(ctx, req)
+	return c.finishJob(ctx, id, err)
+}
+
+func (c *Client) finishJob(ctx context.Context, id string, err error) (*JobResults, error) {
 	if err != nil {
 		return nil, err
 	}

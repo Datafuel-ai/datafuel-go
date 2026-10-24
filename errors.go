@@ -36,7 +36,9 @@ func (e *APIError) Is(target error) bool {
 
 // Sentinels for errors.Is.
 var (
-	ErrUnauthorized         error = &APIError{StatusCode: http.StatusUnauthorized}
+	ErrUnauthorized error = &APIError{StatusCode: http.StatusUnauthorized}
+	// ErrForbidden: the account behind the key is deactivated.
+	ErrForbidden            error = &APIError{StatusCode: http.StatusForbidden}
 	ErrNotFound             error = &APIError{StatusCode: http.StatusNotFound}
 	ErrRateLimited          error = &APIError{StatusCode: http.StatusTooManyRequests}
 	ErrInsufficientCredits  error = &APIError{Code: "INSUFFICIENT_CREDITS"}
@@ -49,6 +51,11 @@ var (
 	ErrTaskStillProcessing        error = &APIError{Code: codeStillProcessing}
 	ErrJobRequiresMultipleTargets error = &APIError{Code: "JOB_REQUIRES_MULTIPLE_TARGETS"}
 	ErrJobNotCancellable          error = &APIError{Code: "JOB_NOT_CANCELLABLE"}
+	// ErrTaskAlreadyExists and ErrJobAlreadyExists: a create collided with
+	// another task or job and is not an idempotent replay. Nothing was
+	// charged; send the request again.
+	ErrTaskAlreadyExists error = &APIError{Code: "TASK_ALREADY_EXISTS"}
+	ErrJobAlreadyExists  error = &APIError{Code: "JOB_ALREADY_EXISTS"}
 	// ErrInvalidQueryParam is a list call with a negative or non-numeric
 	// limit or page, or a job ID that is not a UUID.
 	ErrInvalidQueryParam error = &APIError{Code: "INVALID_QUERY_PARAM"}
