@@ -32,6 +32,9 @@ type SearchRequest struct {
 	LSig    string `json:"lsig,omitempty"`
 	IBP     string `json:"ibp,omitempty"`
 
+	// AIOverview asks for Google's AI overview too. Default false.
+	AIOverview bool `json:"ai_overview,omitempty"`
+
 	// ProxyCountry is accepted but not used yet: searches leave through
 	// DataFuel's own pool. Target a market with Country and Language.
 	ProxyCountry string `json:"proxy_country,omitempty"`
