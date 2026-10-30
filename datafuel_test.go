@@ -571,7 +571,7 @@ func TestSearchSendsSERPAttributes(t *testing.T) {
 		body := readBody(t, r)
 		attrs := body["attributes"].(map[string]any)
 		if body["type"] != "serp" || attrs["query"] != "best crm" || attrs["country"] != "us" ||
-			attrs["page"] != float64(2) || attrs["lat"] != 52.5 || attrs["nfpr"] != true || attrs["ai_overview"] != true || attrs["result_format"] != "markdown" {
+			attrs["page"] != float64(2) || attrs["lat"] != 52.5 || attrs["nfpr"] != true || attrs["ai_overview"] != true || attrs["device"] != "mobile" || attrs["result_format"] != "markdown" {
 			t.Errorf("body = %v", body)
 		}
 		if _, ok := body["proxy_type"]; ok {
@@ -584,7 +584,7 @@ func TestSearchSendsSERPAttributes(t *testing.T) {
 	})
 	lat, lon, nfpr := 52.5, 13.4, true
 	res, err := client.Search(context.Background(), &SearchRequest{
-		Query: "best crm", Country: "us", Page: 2, Lat: &lat, Lon: &lon, NFPR: &nfpr, AIOverview: true, Format: FormatMarkdown,
+		Query: "best crm", Country: "us", Page: 2, Lat: &lat, Lon: &lon, NFPR: &nfpr, AIOverview: true, Device: "mobile", Format: FormatMarkdown,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -131,7 +131,7 @@ var serp map[string]any
 err = res.Decode(&serp)
 ```
 
-Results are JSON unless you set `Format` to `FormatHTML` or `FormatMarkdown`. `Location`, `UULE` and `Lat`/`Lon` are mutually exclusive. Searches leave through DataFuel's own pool: pick the market with `Country` and `Language`; `ProxyCountry` is accepted but not used yet.
+Results are JSON unless you set `Format` to `FormatHTML` or `FormatMarkdown`. `Location`, `UULE` and `Lat`/`Lon` are mutually exclusive. Searches leave through DataFuel's own pool: pick the market with `Country` and `Language`; `ProxyCountry` is accepted but not used yet. Set `Device: "mobile"` for mobile results (default `"desktop"`).
 
 ## Map
 

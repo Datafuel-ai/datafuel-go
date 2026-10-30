@@ -32,6 +32,9 @@ type SearchRequest struct {
 	LSig    string `json:"lsig,omitempty"`
 	IBP     string `json:"ibp,omitempty"`
 
+	// Device is "desktop" (default) or "mobile".
+	Device string `json:"device,omitempty"`
+
 	// AIOverview asks for Google's AI overview too. Default false.
 	AIOverview bool `json:"ai_overview,omitempty"`
 
