@@ -41,7 +41,7 @@ const (
 	// DefaultBaseURL is the production API.
 	DefaultBaseURL = "https://scraping-api.datafuel.ai/api/v1"
 	// Version of this SDK, sent in the User-Agent.
-	Version = "0.4.0"
+	Version = "0.5.0"
 )
 
 // Client talks to the DataFuel API. It is safe for concurrent use.
