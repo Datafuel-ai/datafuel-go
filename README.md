@@ -131,7 +131,37 @@ var serp map[string]any
 err = res.Decode(&serp)
 ```
 
-Results are JSON unless you set `Format` to `FormatHTML` or `FormatMarkdown`. `Location`, `UULE` and `Lat`/`Lon` are mutually exclusive. Searches leave through DataFuel's own pool: pick the market with `Country` and `Language`; `ProxyCountry` is accepted but not used yet. Set `Device: "mobile"` for mobile results (default `"desktop"`).
+Results are JSON unless you set `Format` to `FormatHTML` or `FormatMarkdown`. `Location`, `UULE` and `Lat`/`Lon` are mutually exclusive. Searches leave through DataFuel's own pool: pick the market with `Country` and `Language`; `ProxyCountry` is accepted but not used yet.
+
+- `Page` is how many result pages to fetch (default 1, capped at 10). They come back merged into one `organic` list with running positions; the other sections come from page 1. A search costs 10 credits per page, pages Google did not serve are refunded, and the result's `page` is the number returned.
+- `Device: datafuel.DeviceMobile` returns mobile results (default `DeviceDesktop`). Mobile results have no `total_results`.
+- `AIOverview: true` adds Google's AI overview, when it shows one, as `ai_overview` (text, products, references):
+
+```go
+res, err := client.Search(ctx, &datafuel.SearchRequest{Query: "best crm", Page: 3, AIOverview: true})
+var serp struct {
+    Organic    []struct{ Position int; Title, URL string } `json:"organic"`
+    AIOverview *datafuel.AIOverview                       `json:"ai_overview"`
+}
+err = res.Decode(&serp)
+```
+
+## Ask
+
+```go
+res, err := client.Ask(ctx, &datafuel.AskRequest{
+    Prompt: "best crm for startups",
+    Engine: datafuel.EngineDuckAI,
+    Model:  "claude-haiku-4-5",
+})
+var answer struct {
+    Text      string `json:"text"`
+    Citations []any  `json:"citations"`
+}
+err = res.Decode(&answer)
+```
+
+`Model` only works with `EngineDuckAI`: `gpt-6-luna` (default), `gpt-5.4-mini`, `claude-haiku-4-5`, `mistral-small-2603`, `tinfoil/gpt-oss-120b`, `tinfoil/gemma4-31b`. Anything else is rejected with `ErrInvalidAttributes`. `FollowUp` works on `EngineOpenAI` and `EnginePerplexity` only; on other engines the task fails and is refunded. `res.Engine` names the engine that answered. `Format` is ignored: answers are always JSON.
 
 ## Map
 
@@ -186,6 +216,7 @@ All work with `errors.Is` and `errors.As`.
 - `*datafuel.APIError`: the API refused the request. Sentinels: `ErrUnauthorized`, `ErrInsufficientCredits`, `ErrRateLimited`, `ErrNotFound`, `ErrInvalidAttributes`, `ErrIdempotencyKeyReused`, `ErrJobRequiresMultipleTargets`, `ErrJobNotCancellable`, `ErrInvalidQueryParam`.
 - `ErrTaskStillProcessing`: the API answered 202, the task has not finished. `Scrape`, `Map`, `Search` and `Ask` handle it by re-sending with the same `Idempotency-Key` until the task is done, so you only see it, together with the context error, when your context ends first. Send the request again with the same `IdempotencyKey` to pick the task up.
 - `ErrModuleUnavailable`, `ErrEngineUnavailable`: an operator switched a task type or LLM engine off, e.g. during a provider outage. The reason is in the error message, nothing is charged, and the SDK does not retry. `client.Capabilities(ctx)` lists what is on.
+- `ErrServiceUnavailable`: `503 SERVICE_UNAVAILABLE`, the API could not reach a backing store. It is transient, so the SDK retries it like any other 503, unlike `ErrModuleUnavailable` and `ErrEngineUnavailable`.
 - `*datafuel.TaskError`: the API accepted the task but the page could not be scraped. Matches `ErrTaskFailed`, and `ErrBlocked` when the target refused. The `Result` is returned together with the error. Failed tasks are refunded.
 
 ## Retries and idempotency

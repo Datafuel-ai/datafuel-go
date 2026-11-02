@@ -209,6 +209,7 @@ type Result struct {
 	Blocked     bool   `json:"blocked,omitempty"`
 	Protection  string `json:"protection,omitempty"` // anti-bot vendor when Blocked
 	Error       string `json:"error,omitempty"`
+	Engine      string `json:"engine,omitempty"` // llm_scraping only
 
 	// Payload is the raw "result" object. Prefer Text, Decode and Image.
 	Payload Payload `json:"result"`
@@ -375,16 +376,29 @@ const (
 	EngineGoogleAIMode Engine = "google_ai_mode"
 	EnginePerplexity   Engine = "perplexity"
 	EngineCopilot      Engine = "copilot"
+	// EngineDuckAI answers through duck.ai; its result data is
+	// {"text", "citations"}. Pick the model with AskRequest.Model.
+	EngineDuckAI Engine = "duck_ai"
 )
 
 // AskRequest is a prompt for an AI engine (task type llm_scraping).
 type AskRequest struct {
-	Prompt         string
-	Engine         Engine
-	WebSearch      bool
-	FollowUp       string
-	Country        string
-	Location       string
+	Prompt    string
+	Engine    Engine
+	WebSearch bool
+	// FollowUp is a second prompt in the same conversation. Only
+	// EngineOpenAI and EnginePerplexity support it; on other engines the
+	// task fails and is refunded.
+	FollowUp string
+	Country  string
+	Location string
+	// Model picks the duck.ai model and is only valid with EngineDuckAI:
+	// gpt-6-luna (default), gpt-5.4-mini, claude-haiku-4-5,
+	// mistral-small-2603, tinfoil/gpt-oss-120b or tinfoil/gemma4-31b. Any
+	// other value, or a model on another engine, is rejected with
+	// ErrInvalidAttributes.
+	Model string
+	// Format is ignored by the API: Ask results are always JSON.
 	Format         string
 	IdempotencyKey string
 }
@@ -397,6 +411,7 @@ func (r *AskRequest) attributes(target map[string]any) map[string]any {
 	setIf(target, "follow_up_prompt", r.FollowUp)
 	setIf(target, "proxy_country", r.Country)
 	setIf(target, "location", r.Location)
+	setIf(target, "model", r.Model)
 	setIf(target, "result_format", r.Format)
 	return target
 }
