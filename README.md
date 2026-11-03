@@ -12,6 +12,16 @@ client := datafuel.New(os.Getenv("DATAFUEL_API_KEY"))
 markdown, err := client.Markdown(ctx, "https://example.com")
 ```
 
+## Authentication
+
+Get a scraping key (`df_key_…`) from your [DataFuel dashboard](https://dashboard.datafuel.ai) and set it as `DATAFUEL_API_KEY`:
+
+```bash
+export DATAFUEL_API_KEY=df_key_...
+```
+
+`datafuel.New("")` reads the variable; `datafuel.New("df_key_...")` takes the key directly. With neither, every call returns `datafuel.ErrNoAPIKey` before anything is sent. The key goes out in the `X-API-Key` header. Keep it server-side: never ship it in browser or app code. Rotate it with `client.ResetAPIKey(ctx)`.
+
 ## Pick the call
 
 | You have | Call | Blocks? |
