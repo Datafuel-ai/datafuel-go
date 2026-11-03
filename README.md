@@ -161,7 +161,7 @@ var answer struct {
 err = res.Decode(&answer)
 ```
 
-`Model` only works with `EngineDuckAI`: `gpt-6-luna` (default), `gpt-5.4-mini`, `claude-haiku-4-5`, `mistral-small-2603`, `tinfoil/gpt-oss-120b`, `tinfoil/gemma4-31b`. Anything else is rejected with `ErrInvalidAttributes`. `FollowUp` works on `EngineOpenAI` and `EnginePerplexity` only; on other engines the task fails and is refunded. `res.Engine` names the engine that answered. `Format` is ignored: answers are always JSON.
+`Model` only works with `EngineDuckAI`; the accepted models are listed on `AskRequest.Model`, anything else is rejected with `ErrInvalidAttributes`. On `EngineDuckAI`, `WebSearch` only affects the `tinfoil/*` models; other duck_ai models ignore it. `FollowUp` works on `EngineOpenAI` and `EnginePerplexity` only; on other engines the task fails and is refunded. `res.Engine` names the engine the task asked for. `Format` is ignored: answers are always JSON.
 
 ## Map
 

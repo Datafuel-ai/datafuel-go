@@ -209,7 +209,7 @@ type Result struct {
 	Blocked     bool   `json:"blocked,omitempty"`
 	Protection  string `json:"protection,omitempty"` // anti-bot vendor when Blocked
 	Error       string `json:"error,omitempty"`
-	Engine      string `json:"engine,omitempty"` // llm_scraping only
+	Engine      string `json:"engine,omitempty"` // llm_scraping only: the engine the task asked for
 
 	// Payload is the raw "result" object. Prefer Text, Decode and Image.
 	Payload Payload `json:"result"`
@@ -383,8 +383,10 @@ const (
 
 // AskRequest is a prompt for an AI engine (task type llm_scraping).
 type AskRequest struct {
-	Prompt    string
-	Engine    Engine
+	Prompt string
+	Engine Engine
+	// WebSearch on EngineDuckAI only affects the tinfoil/* models; other
+	// duck.ai models ignore it.
 	WebSearch bool
 	// FollowUp is a second prompt in the same conversation. Only
 	// EngineOpenAI and EnginePerplexity support it; on other engines the
