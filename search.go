@@ -2,6 +2,42 @@ package datafuel
 
 import "context"
 
+// Device is the device a search is made from.
+type Device string
+
+const (
+	DeviceDesktop Device = "desktop"
+	// DeviceMobile results carry no total_results.
+	DeviceMobile Device = "mobile"
+)
+
+// AIOverview is Google's AI overview, the "ai_overview" key of a JSON search
+// result when SearchRequest.AIOverview is set and Google showed one.
+type AIOverview struct {
+	Text       string                `json:"text"`
+	Products   []AIOverviewProduct   `json:"products,omitempty"`
+	References []AIOverviewReference `json:"references,omitempty"`
+}
+
+// AIOverviewProduct is a product card in an AI overview.
+type AIOverviewProduct struct {
+	Title   string  `json:"title"`
+	Price   string  `json:"price,omitempty"`
+	Source  string  `json:"source,omitempty"`
+	Rating  float64 `json:"rating,omitempty"`
+	Reviews int     `json:"reviews,omitempty"`
+	Link    string  `json:"link,omitempty"`
+}
+
+// AIOverviewReference is a source cited by an AI overview.
+type AIOverviewReference struct {
+	Title    string `json:"title"`
+	Source   string `json:"source,omitempty"`
+	Snippet  string `json:"snippet,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Redirect string `json:"redirect,omitempty"`
+}
+
 // SearchRequest is a Google search (task type serp). Location, UULE and
 // Lat/Lon are mutually exclusive; Radius needs one of them. The result is
 // JSON by default, read it with Result.Decode.
@@ -11,8 +47,14 @@ type SearchRequest struct {
 	Country      string `json:"country,omitempty"`  // gl, e.g. "us"
 	Language     string `json:"language,omitempty"` // hl, e.g. "en"
 	Location     string `json:"location,omitempty"` // e.g. "Austin, Texas, United States"
-	Page         int    `json:"page,omitempty"`     // 1-based, default 1
 	GoogleDomain string `json:"google_domain,omitempty"`
+
+	// Page is how many result pages to fetch, default 1. They come back
+	// merged into one organic list with running positions; the other
+	// sections come from page 1. The API caps it at 10 and rejects a
+	// negative value. Each page costs 10 credits, pages Google did not serve
+	// are refunded, and the result's "page" is the number returned.
+	Page int `json:"page,omitempty"`
 
 	UULE   string   `json:"uule,omitempty"`
 	Lat    *float64 `json:"lat,omitempty"`
@@ -31,6 +73,13 @@ type SearchRequest struct {
 	LudoCID string `json:"ludocid,omitempty"`
 	LSig    string `json:"lsig,omitempty"`
 	IBP     string `json:"ibp,omitempty"`
+
+	// Device is DeviceDesktop (default) or DeviceMobile.
+	Device Device `json:"device,omitempty"`
+
+	// AIOverview asks for Google's AI overview too, returned as the
+	// "ai_overview" key of the result; decode it into an [AIOverview].
+	AIOverview bool `json:"ai_overview,omitempty"`
 
 	// ProxyCountry is accepted but not used yet: searches leave through
 	// DataFuel's own pool. Target a market with Country and Language.

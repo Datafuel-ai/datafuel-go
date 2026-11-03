@@ -57,6 +57,9 @@ var (
 	// Nothing was charged. They are never retried: see Client.Capabilities.
 	ErrModuleUnavailable error = &APIError{Code: "MODULE_UNAVAILABLE"}
 	ErrEngineUnavailable error = &APIError{Code: "ENGINE_UNAVAILABLE"}
+	// ErrServiceUnavailable is a 503 for a backing store the API could not
+	// reach. Unlike a switch-off it is transient and retried.
+	ErrServiceUnavailable error = &APIError{Code: "SERVICE_UNAVAILABLE"}
 
 	// ErrNoAPIKey is returned before any request when the client has no key.
 	ErrNoAPIKey = errors.New("datafuel: no API key: pass one to New or set DATAFUEL_API_KEY")

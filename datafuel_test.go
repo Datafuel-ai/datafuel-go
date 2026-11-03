@@ -571,7 +571,7 @@ func TestSearchSendsSERPAttributes(t *testing.T) {
 		body := readBody(t, r)
 		attrs := body["attributes"].(map[string]any)
 		if body["type"] != "serp" || attrs["query"] != "best crm" || attrs["country"] != "us" ||
-			attrs["page"] != float64(2) || attrs["lat"] != 52.5 || attrs["nfpr"] != true || attrs["result_format"] != "markdown" {
+			attrs["page"] != float64(2) || attrs["lat"] != 52.5 || attrs["nfpr"] != true || attrs["ai_overview"] != true || attrs["device"] != "mobile" || attrs["result_format"] != "markdown" {
 			t.Errorf("body = %v", body)
 		}
 		if _, ok := body["proxy_type"]; ok {
@@ -584,7 +584,7 @@ func TestSearchSendsSERPAttributes(t *testing.T) {
 	})
 	lat, lon, nfpr := 52.5, 13.4, true
 	res, err := client.Search(context.Background(), &SearchRequest{
-		Query: "best crm", Country: "us", Page: 2, Lat: &lat, Lon: &lon, NFPR: &nfpr, Format: FormatMarkdown,
+		Query: "best crm", Country: "us", Page: 2, Lat: &lat, Lon: &lon, NFPR: &nfpr, AIOverview: true, Device: DeviceMobile, Format: FormatMarkdown,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -800,5 +800,103 @@ func TestInvalidQueryParamMatchesItsSentinel(t *testing.T) {
 	_, err := client.ListJobs(context.Background(), &ListOptions{Limit: 5})
 	if !errors.Is(err, ErrInvalidQueryParam) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSearchDecodesAIOverview(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		attrs := readBody(t, r)["attributes"].(map[string]any)
+		if attrs["page"] != float64(3) || attrs["device"] != "desktop" || attrs["ai_overview"] != true {
+			t.Errorf("attributes = %v", attrs)
+		}
+		io.WriteString(w, `{"id":"s2","status":"completed","credits_used":30,"result":{"data":{"page":3,
+			"ai_overview":{"text":"CRMs","products":[{"title":"HubSpot","price":"$20","rating":4.5,"reviews":120}],
+			"references":[{"title":"Best CRMs","url":"https://example.com/crm","redirect":"https://google.com/url?q=x"}]}}}}`)
+	})
+	res, err := client.Search(context.Background(), &SearchRequest{Query: "best crm", Page: 3, Device: DeviceDesktop, AIOverview: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Page       int         `json:"page"`
+		AIOverview *AIOverview `json:"ai_overview"`
+	}
+	if err := res.Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	ov := out.AIOverview
+	if out.Page != 3 || ov == nil || ov.Text != "CRMs" || ov.Products[0].Reviews != 120 || ov.Products[0].Rating != 4.5 ||
+		ov.References[0].URL != "https://example.com/crm" || ov.References[0].Redirect == "" {
+		t.Fatalf("decoded = %+v %+v", out, ov)
+	}
+}
+
+func TestAskSendsDuckAIModelAndDecodesEngine(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		attrs := readBody(t, r)["attributes"].(map[string]any)
+		if attrs["engine"] != "duck_ai" || attrs["model"] != "claude-haiku-4-5" {
+			t.Errorf("attributes = %v", attrs)
+		}
+		io.WriteString(w, `{"id":"t1","status":"completed","engine":"duck_ai","credits_used":100,
+			"result":{"data":{"text":"HubSpot","citations":[]}}}`)
+	})
+	res, err := client.Ask(context.Background(), &AskRequest{Prompt: "best crm", Engine: EngineDuckAI, Model: "claude-haiku-4-5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Engine != "duck_ai" {
+		t.Errorf("Engine = %q", res.Engine)
+	}
+	var out struct{ Text string }
+	if err := res.Decode(&out); err != nil || out.Text != "HubSpot" {
+		t.Fatalf("decode: %+v %v", out, err)
+	}
+}
+
+func TestAskOmitsEmptyModel(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		attrs := readBody(t, r)["attributes"].(map[string]any)
+		if _, ok := attrs["model"]; ok {
+			t.Errorf("empty model must be omitted: %v", attrs)
+		}
+		io.WriteString(w, `{"id":"t1","status":"completed","credits_used":100,"result":{"data":"ok"}}`)
+	})
+	if _, err := client.Ask(context.Background(), &AskRequest{Prompt: "p", Engine: EngineOpenAI}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateAskJobSendsModel(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		attrs := readBody(t, r)["attributes"].(map[string]any)
+		if attrs["engine"] != "duck_ai" || attrs["model"] != "gpt-5.4-mini" {
+			t.Errorf("attributes = %v", attrs)
+		}
+		io.WriteString(w, `{"id":"j3"}`)
+	})
+	id, err := client.CreateAskJob(context.Background(), &AskJobRequest{
+		Prompts:    []string{"a", "b"},
+		AskRequest: AskRequest{Engine: EngineDuckAI, Model: "gpt-5.4-mini"},
+	})
+	if err != nil || id != "j3" {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+}
+
+func TestServiceUnavailableIsRetried(t *testing.T) {
+	var calls atomic.Int32
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			io.WriteString(w, `{"code":"SERVICE_UNAVAILABLE","message":"store down"}`)
+			return
+		}
+		io.WriteString(w, `{"id":"t1","status":"completed","credits_used":10,"result":{"data":{}}}`)
+	})
+	if _, err := client.Search(context.Background(), &SearchRequest{Query: "q"}); err != nil || calls.Load() != 2 {
+		t.Fatalf("calls=%d err=%v", calls.Load(), err)
+	}
+	if !errors.Is(&APIError{StatusCode: 503, Code: "SERVICE_UNAVAILABLE"}, ErrServiceUnavailable) {
+		t.Fatal("ErrServiceUnavailable does not match")
 	}
 }
