@@ -48,7 +48,14 @@ var (
 	// together with the context error once ctx ends.
 	ErrTaskStillProcessing        error = &APIError{Code: codeStillProcessing}
 	ErrJobRequiresMultipleTargets error = &APIError{Code: "JOB_REQUIRES_MULTIPLE_TARGETS"}
-	ErrJobNotCancellable          error = &APIError{Code: "JOB_NOT_CANCELLABLE"}
+	// ErrJobTooManyTargets is a job above the per-job target limit (10,000):
+	// split it into several jobs.
+	ErrJobTooManyTargets error = &APIError{Code: "JOB_TOO_MANY_TARGETS"}
+	ErrJobNotCancellable error = &APIError{Code: "JOB_NOT_CANCELLABLE"}
+	// ErrResultExpired is a 410 for a task whose result passed the 30-day
+	// retention. A retry with the same Idempotency-Key keeps answering 410:
+	// to run the task again, use a new key.
+	ErrResultExpired error = &APIError{Code: "RESULT_EXPIRED"}
 	// ErrInvalidQueryParam is a list call with a negative or non-numeric
 	// limit or page, or a job ID that is not a UUID.
 	ErrInvalidQueryParam error = &APIError{Code: "INVALID_QUERY_PARAM"}
