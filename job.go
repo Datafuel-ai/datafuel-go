@@ -21,8 +21,7 @@ type JobRequest struct {
 	// them concurrently, bounded by your account's concurrency limit.
 	Sequential     bool
 	IdempotencyKey string
-	// Webhook, when set, receives one signed POST when the job finishes.
-	Webhook *Webhook
+	Webhook        *Webhook
 	ScrapeOptions
 }
 
@@ -30,7 +29,6 @@ type JobRequest struct {
 type AskJobRequest struct {
 	Prompts    []string
 	Sequential bool
-	// Webhook, when set, receives one signed POST when the job finishes.
 	Webhook    *Webhook
 	AskRequest // Prompt is ignored
 }
@@ -42,8 +40,7 @@ type JobStatus struct {
 	TasksDone      int    `json:"tasks_done"`
 	TasksRemaining int    `json:"tasks_remaining"`
 	TotalCost      int    `json:"total_cost"`
-	// WebhookURL is the job's webhook, when it was created with one.
-	WebhookURL string `json:"webhook_url,omitempty"`
+	WebhookURL     string `json:"webhook_url,omitempty"`
 }
 
 // CancelResult is the state of a job or crawl after a cancel. Pending tasks
@@ -64,8 +61,7 @@ type JobResults struct {
 	Tasks         []*Result `json:"tasks_result"`
 }
 
-// JobResultsPage is one page of a job's task results, in task order. The
-// counters cover the whole job on every page.
+// JobResultsPage holds one page of results; its counters cover the whole job.
 type JobResultsPage struct {
 	TasksCount    int       `json:"tasks_count"`
 	TasksFailed   int       `json:"tasks_failed"`
@@ -114,9 +110,8 @@ func (c *Client) GetJob(ctx context.Context, jobID string) (*JobStatus, error) {
 	return &out, nil
 }
 
-// JobResults returns the per-task results of a job, every task, fetching as
-// many pages as it takes. For large jobs prefer JobResultsPage, which does not
-// hold every result in memory.
+// JobResults fetches every result page and holds all tasks in memory. For
+// large jobs use JobResultsPage.
 func (c *Client) JobResults(ctx context.Context, jobID string) (*JobResults, error) {
 	out := &JobResults{}
 	cursor := ""
@@ -138,10 +133,8 @@ func (c *Client) JobResults(ctx context.Context, jobID string) (*JobResults, err
 	}
 }
 
-// JobResultsPage returns one page of a job's results in task order. limit 0
-// uses the API default (50, max 100). Pass NextCursor back as cursor until it
-// is empty. Results can be read while the job runs; unfinished tasks report
-// Pending.
+// JobResultsPage reads one page in task order, also while the job runs:
+// unfinished tasks report Pending. limit 0 uses the API default (50, max 100).
 func (c *Client) JobResultsPage(ctx context.Context, jobID, cursor string, limit int) (*JobResultsPage, error) {
 	query := url.Values{}
 	if cursor != "" {

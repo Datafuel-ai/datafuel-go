@@ -25,7 +25,6 @@ type CrawlRequest struct {
 	AllowBackwardLinks bool
 	Concurrency        int // pages in flight, default 5
 
-	// Webhook, when set, receives one signed POST when the crawl finishes.
 	Webhook *Webhook
 
 	IdempotencyKey string
@@ -48,8 +47,7 @@ type CrawlStatus struct {
 	DepthReached int `json:"depth_reached"`
 	// TotalCost is what was charged at queue time; refunds of failed pages
 	// are not subtracted. Sum CrawlPage.CreditsUsed for the net figure.
-	TotalCost int `json:"total_cost"`
-	// WebhookURL is the crawl's webhook, when it was created with one.
+	TotalCost  int       `json:"total_cost"`
 	WebhookURL string    `json:"webhook_url,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`

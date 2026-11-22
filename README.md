@@ -102,7 +102,7 @@ status, err := client.WaitCrawl(ctx, id) // status.StopReason: max_pages, max_de
 
 for page, err := range client.CrawlPages(ctx, id) {
     if err != nil { return err }
-    if page.Err() != nil { continue } // failed or blocked page, refunded
+    if page.Err() != nil { continue } // failed or blocked (refunded), or expired
     fmt.Println(page.URL, page.Depth, len(page.Text()))
 }
 ```
@@ -128,7 +128,7 @@ results, err := client.RunJob(ctx, &datafuel.JobRequest{
     ScrapeOptions: datafuel.ScrapeOptions{Format: datafuel.FormatMarkdown},
 })
 for _, task := range results.Tasks {
-    if err := task.Err(); err != nil { /* this URL failed, the others did not */ }
+    if err := task.Err(); err != nil { /* this URL failed or its result expired, the others did not */ }
 }
 ```
 
@@ -149,7 +149,7 @@ Results are JSON unless you set `Format` to `FormatHTML` or `FormatMarkdown`. `L
 - `Page` is how many result pages to fetch (default 1, capped at 10). They come back merged into one `organic` list with running positions; the other sections come from page 1. A search costs 10 credits per page, pages Google did not serve are refunded, and the result's `page` is the number returned.
 - `Start` is the result offset of the first page, a multiple of 10 up to 90: `Start: 10, Page: 1` returns page 2 only. Pages from separate requests can repeat or miss results; for one consistent list use `Page` alone.
 - `ResolveURL: true` resolves Google's `/goto` links to their targets (a few seconds more). Without it most results carry only `redirect`.
-- `Engine: datafuel.SearchEngineShopping` with `URL` (a `/search` product link with `ibp=oshop` and `prds`, e.g. from `product_grids`) reads one Google Shopping product page: offers, rating, reviews, specifications, variants. On a job, pass `URLs` instead of `Queries`.
+- `Engine: datafuel.SearchEngineShopping` with `URL` (a `/search` product link with `ibp=oshop` and `prds`, e.g. from `product_grids`) reads one Google Shopping product page: offers, rating, reviews, specifications, variants. On a job, pass `URLs` instead of `Queries`; setting `URL` returns `ErrSearchJobURL` before any request.
 - `Device: datafuel.DeviceMobile` returns mobile results (default `DeviceDesktop`). Mobile results have no `total_results`.
 - `AIOverview: true` adds Google's AI overview, when it shows one, as `ai_overview` (text, products, references):
 
@@ -191,7 +191,7 @@ id, err := client.CreateJob(ctx, &datafuel.JobRequest{
 secret, err := client.WebhookSecret(ctx) // verify deliveries with any Standard Webhooks library
 ```
 
-To receive every job or crawl event, create an account endpoint. Its own secret is returned once:
+To receive every job or crawl event, create an account endpoint. Store its own secret: only creating the endpoint and `RotateWebhookEndpointSecret` return one:
 
 ```go
 ep, err := client.CreateWebhookEndpoint(ctx, &datafuel.CreateWebhookEndpointRequest{
@@ -254,7 +254,8 @@ health, err := client.Health(ctx, true)                       // health.OK() is 
 All work with `errors.Is` and `errors.As`.
 
 - `datafuel.ErrNoAPIKey`: no key was passed and `DATAFUEL_API_KEY` is empty. Returned before any request.
-- `*datafuel.APIError`: the API refused the request. Sentinels: `ErrUnauthorized`, `ErrInsufficientCredits`, `ErrRateLimited`, `ErrNotFound`, `ErrInvalidAttributes`, `ErrIdempotencyKeyReused`, `ErrJobRequiresMultipleTargets`, `ErrJobTooManyTargets`, `ErrJobNotCancellable`, `ErrInvalidQueryParam`, `ErrResultExpired` (the result is past its 30-day retention; check `Result.Expired()` on job and crawl entries).
+- `*datafuel.APIError`: the API refused the request. Sentinels: `ErrUnauthorized`, `ErrInsufficientCredits`, `ErrRateLimited`, `ErrNotFound`, `ErrInvalidAttributes`, `ErrIdempotencyKeyReused`, `ErrJobRequiresMultipleTargets`, `ErrJobTooManyTargets`, `ErrJobNotCancellable`, `ErrInvalidQueryParam`, `ErrResultExpired` (the result is past its 30-day retention; `Err()` and `Decode` return it for expired job and crawl entries, and `Result.Expired()` reports them).
+- Webhook and cursor refusals are `*datafuel.APIError` too: `ErrInvalidWebhookURL`, `ErrInvalidWebhookMetadata`, `ErrInvalidWebhookEndpoint`, `ErrWebhookEndpointNotFound` and `ErrWebhookDeliveryNotFound` (both also match `ErrNotFound`), `ErrWebhookEndpointLimitReached`, `ErrWebhookEndpointExists`, `ErrWebhookTestInProgress`, `ErrWebhookDeliveryNotRetryable`, `ErrWebhooksUnavailable`, `ErrInvalidCursor`.
 - `ErrTaskStillProcessing`: the API answered 202, the task has not finished. `Scrape`, `Map`, `Search` and `Ask` handle it by re-sending with the same `Idempotency-Key` until the task is done, so you only see it, together with the context error, when your context ends first. Send the request again with the same `IdempotencyKey` to pick the task up.
 - `ErrModuleUnavailable`, `ErrEngineUnavailable`: an operator switched a task type or LLM engine off, e.g. during a provider outage. The reason is in the error message, nothing is charged, and the SDK does not retry. `client.Capabilities(ctx)` lists what is on.
 - `ErrServiceUnavailable`: `503 SERVICE_UNAVAILABLE`, the API could not reach a backing store. It is transient, so the SDK retries it like any other 503, unlike `ErrModuleUnavailable` and `ErrEngineUnavailable`.

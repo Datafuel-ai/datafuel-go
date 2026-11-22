@@ -37,8 +37,7 @@ type Capability struct {
 	Name    string `json:"name"`
 	Enabled bool   `json:"enabled"`
 	Reason  string `json:"reason,omitempty"` // operator's note when switched off
-	// Models lists the values AskRequest.Model accepts on this engine, the
-	// default first. Empty for engines that take no model.
+	// Models are the accepted AskRequest.Model values, default first.
 	Models []string `json:"models,omitempty"`
 }
 

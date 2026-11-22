@@ -25,15 +25,13 @@ type WebhookSecret struct {
 	PreviousExpiresAt *time.Time `json:"previous_expires_at,omitempty"`
 }
 
-// WebhookEndpoint receives the account's job and crawl events.
 type WebhookEndpoint struct {
 	ID          string `json:"id"`
 	URL         string `json:"url"`
 	Description string `json:"description"`
 	// EventTypes are names such as job.completed, or categories: job.*, crawl.*.
-	EventTypes []string `json:"event_types"`
-	Enabled    bool     `json:"enabled"`
-	// DisabledReason says why DataFuel switched the endpoint off.
+	EventTypes     []string   `json:"event_types"`
+	Enabled        bool       `json:"enabled"`
 	DisabledReason string     `json:"disabled_reason,omitempty"`
 	LastSuccessAt  *time.Time `json:"last_success_at,omitempty"`
 	FailingSince   *time.Time `json:"failing_since,omitempty"`
@@ -41,8 +39,8 @@ type WebhookEndpoint struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
-// CreatedWebhookEndpoint carries the endpoint's own secret, returned only by
-// CreateWebhookEndpoint and RotateWebhookEndpointSecret.
+// CreatedWebhookEndpoint carries the endpoint's own secret. Store it: the API
+// returns it only on create, and a new one from RotateWebhookEndpointSecret.
 type CreatedWebhookEndpoint struct {
 	WebhookEndpoint
 	Secret string `json:"secret"`
@@ -66,7 +64,6 @@ type UpdateWebhookEndpointRequest struct {
 	Enabled     *bool     `json:"enabled,omitempty"`
 }
 
-// WebhookDelivery is one event sent, or being sent, to one URL.
 type WebhookDelivery struct {
 	ID         string `json:"id"`
 	EventID    string `json:"event_id"`
@@ -85,8 +82,6 @@ type WebhookDelivery struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
-// WebhookDeliveriesOptions filters ListWebhookDeliveries. Zero values are not
-// sent.
 type WebhookDeliveriesOptions struct {
 	EndpointID string
 	JobID      string
@@ -96,7 +91,6 @@ type WebhookDeliveriesOptions struct {
 	Cursor string
 }
 
-// WebhookDeliveriesPage is one page of deliveries, newest first.
 type WebhookDeliveriesPage struct {
 	Deliveries []*WebhookDelivery `json:"deliveries"`
 	NextCursor string             `json:"next_cursor"` // empty on the last page
@@ -134,8 +128,6 @@ func (c *Client) RotateWebhookSecret(ctx context.Context) (*WebhookSecret, error
 	return webhookSecretCall(ctx, c, http.MethodPost, "/secret/rotate")
 }
 
-// CreateWebhookEndpoint subscribes a URL to the account's events. Store the
-// returned Secret: it is not shown again.
 func (c *Client) CreateWebhookEndpoint(ctx context.Context, req *CreateWebhookEndpointRequest) (*CreatedWebhookEndpoint, error) {
 	if req == nil {
 		return nil, ErrNilRequest
@@ -147,7 +139,6 @@ func (c *Client) CreateWebhookEndpoint(ctx context.Context, req *CreateWebhookEn
 	return &out, nil
 }
 
-// ListWebhookEndpoints returns the account's endpoints.
 func (c *Client) ListWebhookEndpoints(ctx context.Context) ([]*WebhookEndpoint, error) {
 	var out struct {
 		Endpoints []*WebhookEndpoint `json:"endpoints"`
@@ -158,7 +149,6 @@ func (c *Client) ListWebhookEndpoints(ctx context.Context) ([]*WebhookEndpoint, 
 	return out.Endpoints, nil
 }
 
-// GetWebhookEndpoint returns one endpoint.
 func (c *Client) GetWebhookEndpoint(ctx context.Context, endpointID string) (*WebhookEndpoint, error) {
 	var out WebhookEndpoint
 	if err := c.webhookCall(ctx, http.MethodGet, "/endpoints/"+url.PathEscape(endpointID), nil, &out); err != nil {
@@ -167,7 +157,6 @@ func (c *Client) GetWebhookEndpoint(ctx context.Context, endpointID string) (*We
 	return &out, nil
 }
 
-// UpdateWebhookEndpoint changes the fields set on req.
 func (c *Client) UpdateWebhookEndpoint(ctx context.Context, endpointID string, req *UpdateWebhookEndpointRequest) (*WebhookEndpoint, error) {
 	if req == nil {
 		return nil, ErrNilRequest
@@ -179,7 +168,6 @@ func (c *Client) UpdateWebhookEndpoint(ctx context.Context, endpointID string, r
 	return &out, nil
 }
 
-// DeleteWebhookEndpoint removes an endpoint.
 func (c *Client) DeleteWebhookEndpoint(ctx context.Context, endpointID string) error {
 	return c.webhookCall(ctx, http.MethodDelete, "/endpoints/"+url.PathEscape(endpointID), nil, nil)
 }
@@ -195,8 +183,7 @@ func (c *Client) TestWebhookEndpoint(ctx context.Context, endpointID string) (*W
 	return webhookDeliveryCall(ctx, c, "/endpoints/"+url.PathEscape(endpointID)+"/test")
 }
 
-// ListWebhookDeliveries returns one page of deliveries, newest first. Pass
-// NextCursor back as Cursor until it is empty.
+// ListWebhookDeliveries returns deliveries newest first.
 func (c *Client) ListWebhookDeliveries(ctx context.Context, opts *WebhookDeliveriesOptions) (*WebhookDeliveriesPage, error) {
 	q := url.Values{}
 	if opts != nil {
@@ -213,7 +200,6 @@ func (c *Client) ListWebhookDeliveries(ctx context.Context, opts *WebhookDeliver
 	return &out, nil
 }
 
-// RetryWebhookDelivery sends a delivery again.
 func (c *Client) RetryWebhookDelivery(ctx context.Context, deliveryID string) (*WebhookDelivery, error) {
 	return webhookDeliveryCall(ctx, c, "/deliveries/"+url.PathEscape(deliveryID)+"/retry")
 }

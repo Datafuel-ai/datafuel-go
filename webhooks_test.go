@@ -37,6 +37,50 @@ func TestJobAndCrawlSendWebhook(t *testing.T) {
 	}
 }
 
+func TestWebhookAndCursorErrorsMatchSentinels(t *testing.T) {
+	cases := []struct {
+		code     string
+		status   int
+		sentinel error
+	}{
+		{"INVALID_WEBHOOK_URL", http.StatusBadRequest, ErrInvalidWebhookURL},
+		{"INVALID_WEBHOOK_METADATA", http.StatusBadRequest, ErrInvalidWebhookMetadata},
+		{"INVALID_WEBHOOK_ENDPOINT", http.StatusBadRequest, ErrInvalidWebhookEndpoint},
+		{"WEBHOOK_ENDPOINT_NOT_FOUND", http.StatusNotFound, ErrWebhookEndpointNotFound},
+		{"WEBHOOK_DELIVERY_NOT_FOUND", http.StatusNotFound, ErrWebhookDeliveryNotFound},
+		{"WEBHOOK_ENDPOINT_LIMIT_REACHED", http.StatusConflict, ErrWebhookEndpointLimitReached},
+		{"WEBHOOK_ENDPOINT_EXISTS", http.StatusConflict, ErrWebhookEndpointExists},
+		{"WEBHOOK_TEST_IN_PROGRESS", http.StatusConflict, ErrWebhookTestInProgress},
+		{"WEBHOOK_DELIVERY_NOT_RETRYABLE", http.StatusConflict, ErrWebhookDeliveryNotRetryable},
+		{"WEBHOOKS_UNAVAILABLE", http.StatusServiceUnavailable, ErrWebhooksUnavailable},
+		{"INVALID_CURSOR", http.StatusBadRequest, ErrInvalidCursor},
+	}
+	ctx := context.Background()
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				io.WriteString(w, `{"code":"`+tc.code+`","message":"refused"}`)
+			})
+			_, err := client.TestWebhookEndpoint(ctx, "e1")
+			if !errors.Is(err, tc.sentinel) {
+				t.Fatalf("err = %v", err)
+			}
+			for _, other := range cases {
+				if other.code != tc.code && errors.Is(err, other.sentinel) {
+					t.Errorf("%s also matched %s", tc.code, other.code)
+				}
+			}
+			if got, want := errors.Is(err, ErrNotFound), tc.status == http.StatusNotFound; got != want {
+				t.Errorf("errors.Is(err, ErrNotFound) = %v, want %v", got, want)
+			}
+			if got, want := shouldRetry(ctx, err), tc.status == http.StatusServiceUnavailable; got != want {
+				t.Errorf("shouldRetry = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 func TestJobStatusDecodesWebhookURL(t *testing.T) {
 	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"status":"completed","webhook_url":"https://hooks.test/df"}`)

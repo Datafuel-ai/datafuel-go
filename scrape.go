@@ -1,6 +1,7 @@
 package datafuel
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -250,10 +251,18 @@ func (r *Result) Pending() bool { return !r.Expired() && !r.state().Done() }
 // no data.
 func (r *Result) Expired() bool { return r.Payload.Status == statusExpired }
 
-// Err returns a *TaskError when the task failed, nil otherwise.
+// Err returns a *TaskError when the task failed, an error matching
+// ErrResultExpired when its body passed retention, and nil otherwise.
 func (r *Result) Err() error {
 	if r.state() == StatusFailed {
 		return &TaskError{Result: r}
+	}
+	if r.Expired() {
+		return &APIError{
+			StatusCode: http.StatusGone,
+			Code:       codeResultExpired,
+			Message:    cmp.Or(r.Payload.ErrorDetail, "result expired"),
+		}
 	}
 	return nil
 }
@@ -271,6 +280,9 @@ func (r *Result) Text() string {
 // Decode unmarshals a structured result (FormatJSON, Extract, Template, AI)
 // into v.
 func (r *Result) Decode(v any) error {
+	if r.Expired() {
+		return r.Err()
+	}
 	if len(r.Payload.Data) == 0 {
 		return fmt.Errorf("datafuel: result has no data (status %s)", r.state())
 	}

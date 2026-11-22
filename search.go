@@ -38,14 +38,11 @@ type AIOverviewReference struct {
 	Redirect string `json:"redirect,omitempty"`
 }
 
-// SearchEngine picks what a search reads.
 type SearchEngine string
 
 const (
-	// SearchEngineGoogle is Google web results for Query (the default).
 	SearchEngineGoogle SearchEngine = "google_search"
-	// SearchEngineShopping reads one Google Shopping product page at URL:
-	// offers, rating, reviews, specifications and variants. It takes Country,
+	// SearchEngineShopping reads one product page at URL. It takes Country,
 	// Language, GoogleDomain and Format, and rejects the web search options.
 	SearchEngineShopping SearchEngine = "google_shopping"
 )
@@ -73,8 +70,10 @@ type SearchRequest struct {
 	// are refunded, and the result's "page" is the number returned.
 	Page int `json:"page,omitempty"`
 	// Start is the result offset of the first page, a multiple of 10 up to
-	// 90: Start 10 with Page 1 returns page 2 only. Pages from separate
-	// requests can repeat or miss results; for one consistent list use Page.
+	// 90: Start 10 with Page 1 returns page 2 only. Page is capped at
+	// 10 - Start/10, and the cap also sets what is billed: Start 50 with
+	// Page 10 returns and bills 5 pages. Pages from separate requests can
+	// repeat or miss results; for one consistent list use Page.
 	Start int `json:"start,omitempty"`
 
 	UULE   string   `json:"uule,omitempty"`
@@ -115,16 +114,15 @@ type SearchRequest struct {
 	IdempotencyKey string `json:"-"`
 }
 
-// SearchJobRequest sends a batch of at least two queries, or of two product
-// URLs with SearchEngineShopping.
+// SearchJobRequest sends a batch of at least two Queries, or at least two URLs
+// with SearchEngineShopping.
 type SearchJobRequest struct {
 	Queries []string
 	// URLs are the product pages for SearchEngineShopping, instead of Queries.
-	URLs       []string
-	Sequential bool
-	// Webhook, when set, receives one signed POST when the job finishes.
+	URLs          []string
+	Sequential    bool
 	Webhook       *Webhook
-	SearchRequest // Query and URL are ignored
+	SearchRequest // Query is ignored; URL returns ErrSearchJobURL
 }
 
 // Search runs one Google search and returns the results page.
@@ -144,15 +142,18 @@ func (c *Client) CreateSearchJob(ctx context.Context, req *SearchJobRequest) (st
 	if req == nil {
 		return "", ErrNilRequest
 	}
+	if req.URL != "" {
+		return "", ErrSearchJobURL
+	}
 	attrs, err := toAttrs(&req.SearchRequest)
 	if err != nil {
 		return "", err
 	}
 	delete(attrs, "query")
-	delete(attrs, "url")
 	if len(req.URLs) > 0 {
 		attrs["urls"] = req.URLs
-	} else {
+	}
+	if len(req.Queries) > 0 || len(req.URLs) == 0 {
 		attrs["queries"] = req.Queries
 	}
 	return c.createJob(ctx, envelope{Type: "serp", Webhook: req.Webhook, Attributes: attrs}, req.Sequential, req.IdempotencyKey)

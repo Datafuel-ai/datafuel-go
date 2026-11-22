@@ -66,7 +66,7 @@ func ExampleClient_CrawlPages() {
 			log.Fatal(err)
 		}
 		if page.Err() != nil {
-			continue // failed or blocked page, refunded
+			continue // failed or blocked (refunded), or expired
 		}
 		fmt.Println(page.URL, len(page.Text()))
 	}
