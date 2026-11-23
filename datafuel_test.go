@@ -900,3 +900,244 @@ func TestServiceUnavailableIsRetried(t *testing.T) {
 		t.Fatal("ErrServiceUnavailable does not match")
 	}
 }
+
+func TestJobResultsFollowsEveryPage(t *testing.T) {
+	var calls atomic.Int32
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path != "/job/j1/results" || r.URL.Query().Get("limit") != "100" {
+			t.Errorf("got %s", r.URL)
+		}
+		switch r.URL.Query().Get("cursor") {
+		case "":
+			io.WriteString(w, `{"tasks_count":3,"tasks_complete":3,"tasks_failed":0,"tasks_result":[{"id":"t1","status":"completed"},{"id":"t2","status":"completed"}],"next_cursor":"n1"}`)
+		case "n1":
+			io.WriteString(w, `{"tasks_count":3,"tasks_complete":3,"tasks_failed":0,"tasks_result":[{"id":"t3","status":"completed"}]}`)
+		default:
+			t.Errorf("unexpected cursor %q", r.URL.Query().Get("cursor"))
+		}
+	})
+	results, err := client.JobResults(context.Background(), "j1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 || len(results.Tasks) != 3 || results.Tasks[2].ID != "t3" || results.TasksCount != 3 {
+		t.Fatalf("calls=%d results=%+v", calls.Load(), results)
+	}
+}
+
+func TestJobResultsStopsOnRepeatedCursor(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"tasks_count":1,"tasks_result":[{"id":"t1"}],"next_cursor":"same"}`)
+	})
+	if _, err := client.JobResults(context.Background(), "j1"); err == nil {
+		t.Fatal("want an error on a repeated cursor")
+	}
+}
+
+func TestJobResultsPageSendsCursorAndLimit(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("cursor") != "c1" || r.URL.Query().Get("limit") != "25" {
+			t.Errorf("query = %s", r.URL.RawQuery)
+		}
+		io.WriteString(w, `{"tasks_count":9,"tasks_result":[{"id":"t1"}],"next_cursor":"c2"}`)
+	})
+	page, err := client.JobResultsPage(context.Background(), "j1", "c1", 25)
+	if err != nil || page.NextCursor != "c2" || page.TasksCount != 9 || len(page.Tasks) != 1 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+}
+
+func TestExpiredResultMatchesErrResultExpired(t *testing.T) {
+	var r Result
+	raw := `{"id":"t1","status":"completed","credits_used":1,"result":{"status":"expired","error_detail":"gone"}}`
+	if err := json.Unmarshal([]byte(raw), &r); err != nil {
+		t.Fatal(err)
+	}
+	if !r.Expired() || r.Pending() {
+		t.Fatalf("expired=%v pending=%v", r.Expired(), r.Pending())
+	}
+	var out map[string]any
+	for name, err := range map[string]error{"Err": r.Err(), "Decode": r.Decode(&out)} {
+		var apiErr *APIError
+		if !errors.Is(err, ErrResultExpired) || errors.Is(err, ErrTaskFailed) || !errors.As(err, &apiErr) ||
+			apiErr.Message != "gone" || apiErr.StatusCode != http.StatusGone {
+			t.Errorf("%s = %v", name, err)
+		}
+	}
+}
+
+func TestExpiredEntriesReachErr(t *testing.T) {
+	const expired = `"status":"completed","result":{"status":"expired","error_detail":"gone"}`
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/crawl/c1/results" {
+			io.WriteString(w, `{"pages":[{"url":"https://a.io","task_id":"t1",`+expired+`}]}`)
+			return
+		}
+		io.WriteString(w, `{"tasks_count":1,"tasks_result":[{"id":"t2",`+expired+`}]}`)
+	})
+	ctx := context.Background()
+	pages := 0
+	for page, err := range client.CrawlPages(ctx, "c1") {
+		if err != nil {
+			t.Fatal(err)
+		}
+		pages++
+		if !errors.Is(page.Err(), ErrResultExpired) {
+			t.Fatalf("crawl page err = %v", page.Err())
+		}
+	}
+	if pages != 1 {
+		t.Fatalf("pages = %d", pages)
+	}
+	results, err := client.JobResults(ctx, "j1")
+	if err != nil || len(results.Tasks) != 1 {
+		t.Fatalf("results=%+v err=%v", results, err)
+	}
+	if !errors.Is(results.Tasks[0].Err(), ErrResultExpired) {
+		t.Fatalf("job task err = %v", results.Tasks[0].Err())
+	}
+}
+
+func TestResultExpiredSentinel(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGone)
+		io.WriteString(w, `{"code":"RESULT_EXPIRED","message":"expired"}`)
+	})
+	if _, err := client.GetTask(context.Background(), "t1"); !errors.Is(err, ErrResultExpired) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSearchSendsStartAndResolveURL(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		attrs := readBody(t, r)["attributes"].(map[string]any)
+		if attrs["start"] != float64(10) || attrs["resolve_url"] != true {
+			t.Errorf("attributes = %v", attrs)
+		}
+		io.WriteString(w, `{"id":"t1","status":"completed","result":{"data":{}}}`)
+	})
+	if _, err := client.Search(context.Background(), &SearchRequest{Query: "crm", Start: 10, ResolveURL: true}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShoppingSearchSendsURLWithoutQuery(t *testing.T) {
+	const product = "/search?ibp=oshop&prds=pid:1"
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		attrs := readBody(t, r)["attributes"].(map[string]any)
+		if _, ok := attrs["query"]; ok || attrs["engine"] != "google_shopping" || attrs["url"] != product {
+			t.Errorf("attributes = %v", attrs)
+		}
+		io.WriteString(w, `{"id":"t1","status":"completed","result":{"data":{}}}`)
+	})
+	if _, err := client.Search(context.Background(), &SearchRequest{Engine: SearchEngineShopping, URL: product}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShoppingSearchJobSendsURLs(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		attrs := readBody(t, r)["attributes"].(map[string]any)
+		if _, ok := attrs["queries"]; ok || attrs["engine"] != "google_shopping" || len(attrs["urls"].([]any)) != 2 {
+			t.Errorf("attributes = %v", attrs)
+		}
+		io.WriteString(w, `{"id":"j1"}`)
+	})
+	_, err := client.CreateSearchJob(context.Background(), &SearchJobRequest{
+		URLs:          []string{"/search?ibp=oshop&prds=a", "/search?ibp=oshop&prds=b"},
+		SearchRequest: SearchRequest{Engine: SearchEngineShopping},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSearchJobRejectsSingleURL(t *testing.T) {
+	var calls atomic.Int32
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+	})
+	_, err := client.CreateSearchJob(context.Background(), &SearchJobRequest{
+		URLs:          []string{"/search?ibp=oshop&prds=a", "/search?ibp=oshop&prds=b"},
+		SearchRequest: SearchRequest{Engine: SearchEngineShopping, URL: "/search?ibp=oshop&prds=c"},
+	})
+	if !errors.Is(err, ErrSearchJobURL) || calls.Load() != 0 {
+		t.Fatalf("err=%v calls=%d", err, calls.Load())
+	}
+}
+
+func TestSearchJobSendsURLsAndQueries(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		attrs := readBody(t, r)["attributes"].(map[string]any)
+		queries, _ := attrs["queries"].([]any)
+		urls, _ := attrs["urls"].([]any)
+		if len(queries) != 2 || len(urls) != 2 {
+			t.Errorf("attributes = %v", attrs)
+		}
+		io.WriteString(w, `{"id":"j1"}`)
+	})
+	_, err := client.CreateSearchJob(context.Background(), &SearchJobRequest{
+		Queries: []string{"a", "b"},
+		URLs:    []string{"/search?ibp=oshop&prds=a", "/search?ibp=oshop&prds=b"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShoppingSearchJobOmitsEmptyQueries(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		attrs := readBody(t, r)["attributes"].(map[string]any)
+		if _, ok := attrs["queries"]; ok || len(attrs["urls"].([]any)) != 2 {
+			t.Errorf("attributes = %v", attrs)
+		}
+		io.WriteString(w, `{"id":"j1"}`)
+	})
+	_, err := client.CreateSearchJob(context.Background(), &SearchJobRequest{
+		Queries:       []string{},
+		URLs:          []string{"/search?ibp=oshop&prds=a", "/search?ibp=oshop&prds=b"},
+		SearchRequest: SearchRequest{Engine: SearchEngineShopping},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSearchJobWithoutTargetStillSendsQueries(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		attrs := readBody(t, r)["attributes"].(map[string]any)
+		_, hasQueries := attrs["queries"]
+		_, hasURLs := attrs["urls"]
+		if !hasQueries || hasURLs {
+			t.Errorf("attributes = %v", attrs)
+		}
+		io.WriteString(w, `{"id":"j1"}`)
+	})
+	if _, err := client.CreateSearchJob(context.Background(), &SearchJobRequest{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSearchSendsBothQueryAndURL(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		attrs := readBody(t, r)["attributes"].(map[string]any)
+		if attrs["query"] != "crm" || attrs["url"] != "/search?ibp=oshop&prds=a" {
+			t.Errorf("attributes = %v", attrs)
+		}
+		io.WriteString(w, `{"id":"t1","status":"completed","result":{"data":{}}}`)
+	})
+	if _, err := client.Search(context.Background(), &SearchRequest{Query: "crm", URL: "/search?ibp=oshop&prds=a"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCapabilitiesDecodeModels(t *testing.T) {
+	client := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"modules":[],"engines":[{"name":"duck_ai","enabled":true,"models":["gpt-6-luna"]}]}`)
+	})
+	caps, err := client.Capabilities(context.Background())
+	if err != nil || len(caps.Engines[0].Models) != 1 {
+		t.Fatalf("caps=%+v err=%v", caps, err)
+	}
+}

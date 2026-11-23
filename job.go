@@ -2,9 +2,14 @@ package datafuel
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 )
+
+// jobResultsPageSize is the largest page GET /job/{id}/results serves.
+const jobResultsPageSize = 100
 
 // JobRequest scrapes a list of known URLs asynchronously. Cheaper and more
 // predictable than a crawl when you already have the URLs. A job needs at
@@ -16,6 +21,7 @@ type JobRequest struct {
 	// them concurrently, bounded by your account's concurrency limit.
 	Sequential     bool
 	IdempotencyKey string
+	Webhook        *Webhook
 	ScrapeOptions
 }
 
@@ -23,6 +29,7 @@ type JobRequest struct {
 type AskJobRequest struct {
 	Prompts    []string
 	Sequential bool
+	Webhook    *Webhook
 	AskRequest // Prompt is ignored
 }
 
@@ -33,6 +40,7 @@ type JobStatus struct {
 	TasksDone      int    `json:"tasks_done"`
 	TasksRemaining int    `json:"tasks_remaining"`
 	TotalCost      int    `json:"total_cost"`
+	WebhookURL     string `json:"webhook_url,omitempty"`
 }
 
 // CancelResult is the state of a job or crawl after a cancel. Pending tasks
@@ -53,6 +61,15 @@ type JobResults struct {
 	Tasks         []*Result `json:"tasks_result"`
 }
 
+// JobResultsPage holds one page of results; its counters cover the whole job.
+type JobResultsPage struct {
+	TasksCount    int       `json:"tasks_count"`
+	TasksFailed   int       `json:"tasks_failed"`
+	TasksComplete int       `json:"tasks_complete"`
+	Tasks         []*Result `json:"tasks_result"`
+	NextCursor    string    `json:"next_cursor"` // empty on the last page
+}
+
 // CreateJob queues the batch and returns the job ID immediately.
 func (c *Client) CreateJob(ctx context.Context, req *JobRequest) (string, error) {
 	if req == nil {
@@ -62,7 +79,7 @@ func (c *Client) CreateJob(ctx context.Context, req *JobRequest) (string, error)
 	if err != nil {
 		return "", err
 	}
-	return c.createJob(ctx, envelope{Type: "unlocker", Proxy: req.Proxy, Attributes: req.Proxy.session(attrs)}, req.Sequential, req.IdempotencyKey)
+	return c.createJob(ctx, envelope{Type: "unlocker", Proxy: req.Proxy, Webhook: req.Webhook, Attributes: req.Proxy.session(attrs)}, req.Sequential, req.IdempotencyKey)
 }
 
 // CreateAskJob queues a batch of prompts and returns the job ID.
@@ -71,7 +88,7 @@ func (c *Client) CreateAskJob(ctx context.Context, req *AskJobRequest) (string, 
 		return "", ErrNilRequest
 	}
 	attrs := req.AskRequest.attributes(map[string]any{"prompts": req.Prompts})
-	return c.createJob(ctx, envelope{Type: "llm_scraping", Attributes: attrs}, req.Sequential, req.IdempotencyKey)
+	return c.createJob(ctx, envelope{Type: "llm_scraping", Webhook: req.Webhook, Attributes: attrs}, req.Sequential, req.IdempotencyKey)
 }
 
 func (c *Client) createJob(ctx context.Context, body envelope, sequential bool, key string) (string, error) {
@@ -93,10 +110,42 @@ func (c *Client) GetJob(ctx context.Context, jobID string) (*JobStatus, error) {
 	return &out, nil
 }
 
-// JobResults returns the per-task results of a job.
+// JobResults fetches every result page and holds all tasks in memory. For
+// large jobs use JobResultsPage.
 func (c *Client) JobResults(ctx context.Context, jobID string) (*JobResults, error) {
-	var out JobResults
-	if err := c.do(ctx, request{method: http.MethodGet, path: "/job/" + url.PathEscape(jobID) + "/results"}, &out); err != nil {
+	out := &JobResults{}
+	cursor := ""
+	seen := map[string]bool{}
+	for {
+		page, err := c.JobResultsPage(ctx, jobID, cursor, jobResultsPageSize)
+		if err != nil {
+			return nil, err
+		}
+		out.TasksCount, out.TasksFailed, out.TasksComplete = page.TasksCount, page.TasksFailed, page.TasksComplete
+		out.Tasks = append(out.Tasks, page.Tasks...)
+		if cursor = page.NextCursor; cursor == "" {
+			return out, nil
+		}
+		if seen[cursor] {
+			return nil, errors.New("datafuel: the API repeated a job results cursor")
+		}
+		seen[cursor] = true
+	}
+}
+
+// JobResultsPage reads one page in task order, also while the job runs:
+// unfinished tasks report Pending. limit 0 uses the API default (50, max 100).
+func (c *Client) JobResultsPage(ctx context.Context, jobID, cursor string, limit int) (*JobResultsPage, error) {
+	query := url.Values{}
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	var out JobResultsPage
+	err := c.do(ctx, request{method: http.MethodGet, path: "/job/" + url.PathEscape(jobID) + "/results", query: query}, &out)
+	if err != nil {
 		return nil, err
 	}
 	return &out, nil

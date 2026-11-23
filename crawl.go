@@ -25,6 +25,8 @@ type CrawlRequest struct {
 	AllowBackwardLinks bool
 	Concurrency        int // pages in flight, default 5
 
+	Webhook *Webhook
+
 	IdempotencyKey string
 	ScrapeOptions
 }
@@ -45,9 +47,10 @@ type CrawlStatus struct {
 	DepthReached int `json:"depth_reached"`
 	// TotalCost is what was charged at queue time; refunds of failed pages
 	// are not subtracted. Sum CrawlPage.CreditsUsed for the net figure.
-	TotalCost int       `json:"total_cost"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	TotalCost  int       `json:"total_cost"`
+	WebhookURL string    `json:"webhook_url,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // CrawlPage is one crawled page: where it was found plus the scrape Result.
@@ -100,7 +103,7 @@ func (c *Client) StartCrawl(ctx context.Context, req *CrawlRequest) (string, err
 	}
 	err = c.do(ctx, request{
 		method: http.MethodPost, path: "/crawl",
-		body:           envelope{Type: "crawl", Proxy: req.Proxy, Attributes: req.Proxy.session(attrs)},
+		body:           envelope{Type: "crawl", Proxy: req.Proxy, Webhook: req.Webhook, Attributes: req.Proxy.session(attrs)},
 		idempotencyKey: keyOr(req.IdempotencyKey),
 	}, &out)
 	return out.JobID, err

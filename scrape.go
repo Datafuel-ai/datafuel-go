@@ -1,6 +1,7 @@
 package datafuel
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -169,8 +170,9 @@ func setIf(m map[string]any, key, value string) {
 type envelope struct {
 	Type string `json:"type,omitempty"`
 	Proxy
-	Multithreaded *bool `json:"multithreaded,omitempty"`
-	Attributes    any   `json:"attributes"`
+	Multithreaded *bool    `json:"multithreaded,omitempty"`
+	Webhook       *Webhook `json:"webhook,omitempty"`
+	Attributes    any      `json:"attributes"`
 }
 
 // Status of a task, job or crawl.
@@ -184,6 +186,8 @@ const (
 	StatusCompletedWithErrors Status = "completed_with_errors"
 	StatusFailed              Status = "failed"
 	StatusCancelled           Status = "cancelled"
+
+	statusExpired Status = "expired"
 )
 
 // Done reports whether the status is final.
@@ -216,7 +220,8 @@ type Result struct {
 }
 
 // Payload is {"data": ...} on success, {"status", "error_detail",
-// "status_code"} on failure and {"status"} while a job task is running.
+// "status_code"} on failure, {"status"} while a job task is running and
+// {"status": "expired", "error_detail"} once the body passed its retention.
 type Payload struct {
 	Data        json.RawMessage `json:"data,omitempty"`
 	Status      Status          `json:"status,omitempty"`
@@ -239,12 +244,25 @@ func (r *Result) state() Status {
 
 // Pending reports whether the task has not finished yet (job and crawl
 // results list unfinished tasks as stubs).
-func (r *Result) Pending() bool { return !r.state().Done() }
+func (r *Result) Pending() bool { return !r.Expired() && !r.state().Done() }
 
-// Err returns a *TaskError when the task failed, nil otherwise.
+// Expired reports whether the result body was deleted after the 30-day
+// retention. Job and crawl results keep such an entry with its metadata and
+// no data.
+func (r *Result) Expired() bool { return r.Payload.Status == statusExpired }
+
+// Err returns a *TaskError when the task failed, an error matching
+// ErrResultExpired when its body passed retention, and nil otherwise.
 func (r *Result) Err() error {
 	if r.state() == StatusFailed {
 		return &TaskError{Result: r}
+	}
+	if r.Expired() {
+		return &APIError{
+			StatusCode: http.StatusGone,
+			Code:       codeResultExpired,
+			Message:    cmp.Or(r.Payload.ErrorDetail, "result expired"),
+		}
 	}
 	return nil
 }
@@ -262,6 +280,9 @@ func (r *Result) Text() string {
 // Decode unmarshals a structured result (FormatJSON, Extract, Template, AI)
 // into v.
 func (r *Result) Decode(v any) error {
+	if r.Expired() {
+		return r.Err()
+	}
 	if len(r.Payload.Data) == 0 {
 		return fmt.Errorf("datafuel: result has no data (status %s)", r.state())
 	}

@@ -48,7 +48,15 @@ var (
 	// together with the context error once ctx ends.
 	ErrTaskStillProcessing        error = &APIError{Code: codeStillProcessing}
 	ErrJobRequiresMultipleTargets error = &APIError{Code: "JOB_REQUIRES_MULTIPLE_TARGETS"}
-	ErrJobNotCancellable          error = &APIError{Code: "JOB_NOT_CANCELLABLE"}
+	// ErrJobTooManyTargets is a job above the per-job target limit (10,000):
+	// split it into several jobs.
+	ErrJobTooManyTargets error = &APIError{Code: "JOB_TOO_MANY_TARGETS"}
+	ErrJobNotCancellable error = &APIError{Code: "JOB_NOT_CANCELLABLE"}
+	// ErrResultExpired is a result past its 30-day retention: a 410 from the
+	// API, or Result.Err and Result.Decode on an expired job or crawl entry. A
+	// retry with the same Idempotency-Key keeps answering 410: to run the task
+	// again, use a new key.
+	ErrResultExpired error = &APIError{Code: codeResultExpired}
 	// ErrInvalidQueryParam is a list call with a negative or non-numeric
 	// limit or page, or a job ID that is not a UUID.
 	ErrInvalidQueryParam error = &APIError{Code: "INVALID_QUERY_PARAM"}
@@ -61,11 +69,25 @@ var (
 	// reach. Unlike a switch-off it is transient and retried.
 	ErrServiceUnavailable error = &APIError{Code: "SERVICE_UNAVAILABLE"}
 
+	ErrInvalidCursor               error = &APIError{Code: "INVALID_CURSOR"}
+	ErrInvalidWebhookURL           error = &APIError{Code: "INVALID_WEBHOOK_URL"}
+	ErrInvalidWebhookMetadata      error = &APIError{Code: "INVALID_WEBHOOK_METADATA"}
+	ErrInvalidWebhookEndpoint      error = &APIError{Code: "INVALID_WEBHOOK_ENDPOINT"}
+	ErrWebhookEndpointNotFound     error = &APIError{Code: "WEBHOOK_ENDPOINT_NOT_FOUND"}
+	ErrWebhookDeliveryNotFound     error = &APIError{Code: "WEBHOOK_DELIVERY_NOT_FOUND"}
+	ErrWebhookEndpointLimitReached error = &APIError{Code: "WEBHOOK_ENDPOINT_LIMIT_REACHED"}
+	ErrWebhookEndpointExists       error = &APIError{Code: "WEBHOOK_ENDPOINT_EXISTS"}
+	ErrWebhookTestInProgress       error = &APIError{Code: "WEBHOOK_TEST_IN_PROGRESS"}
+	ErrWebhookDeliveryNotRetryable error = &APIError{Code: "WEBHOOK_DELIVERY_NOT_RETRYABLE"}
+	ErrWebhooksUnavailable         error = &APIError{Code: "WEBHOOKS_UNAVAILABLE"}
+
 	// ErrNoAPIKey is returned before any request when the client has no key.
 	ErrNoAPIKey = errors.New("datafuel: no API key: pass one to New or set DATAFUEL_API_KEY")
 
 	// ErrNilRequest is returned when a request argument is nil.
 	ErrNilRequest = errors.New("datafuel: nil request")
+
+	ErrSearchJobURL = errors.New("datafuel: a search job takes URLs, not SearchRequest.URL")
 
 	// ErrTaskFailed matches every [TaskError].
 	ErrTaskFailed = errors.New("datafuel: task failed")
@@ -75,7 +97,10 @@ var (
 	ErrBlocked = errors.New("datafuel: target blocked the request")
 )
 
-const codeStillProcessing = "TASK_STILL_PROCESSING"
+const (
+	codeStillProcessing = "TASK_STILL_PROCESSING"
+	codeResultExpired   = "RESULT_EXPIRED"
+)
 
 func newAPIError(status int, body []byte) *APIError {
 	e := &APIError{StatusCode: status}

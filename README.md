@@ -36,6 +36,7 @@ export DATAFUEL_API_KEY=df_key_...
 | Earlier jobs, tasks, usage | `ListJobs` / `ListTasks` / `Analytics` / `Transactions` | yes |
 | What a request may contain | `JSInstructions` / `AIProviders` / `ProxyLocations` / `ProxyASNs` / `Capabilities` | yes |
 | The anti-bot wall in front of a URL | `CheckProtection` | yes |
+| Be told when a job or crawl ends | `Webhook` on the request, or `CreateWebhookEndpoint` | no |
 
 Start with plain `Scrape`. Turn on `JSRendering` only when the page comes back empty: it is slower and costs five times the credits on a Basic proxy. `Map` a section before you `Crawl` it, it costs one credit and tells you how big it is.
 
@@ -101,7 +102,7 @@ status, err := client.WaitCrawl(ctx, id) // status.StopReason: max_pages, max_de
 
 for page, err := range client.CrawlPages(ctx, id) {
     if err != nil { return err }
-    if page.Err() != nil { continue } // failed or blocked page, refunded
+    if page.Err() != nil { continue } // failed or blocked (refunded), or expired
     fmt.Println(page.URL, page.Depth, len(page.Text()))
 }
 ```
@@ -127,11 +128,13 @@ results, err := client.RunJob(ctx, &datafuel.JobRequest{
     ScrapeOptions: datafuel.ScrapeOptions{Format: datafuel.FormatMarkdown},
 })
 for _, task := range results.Tasks {
-    if err := task.Err(); err != nil { /* this URL failed, the others did not */ }
+    if err := task.Err(); err != nil { /* this URL failed or its result expired, the others did not */ }
 }
 ```
 
-A job needs at least two URLs; one fails with `ErrJobRequiresMultipleTargets`. Use `Scrape` for a single URL.
+A job needs at least two URLs and takes at most 10,000: one fails with `ErrJobRequiresMultipleTargets`, too many with `ErrJobTooManyTargets`. Use `Scrape` for a single URL.
+
+`RunJob` and `JobResults` return every task, fetching as many result pages as it takes. For a large job, read it a page at a time with `JobResultsPage(ctx, id, cursor, limit)` (default 50, max 100) and pass `NextCursor` back until it is empty.
 
 ## Search
 
@@ -144,6 +147,9 @@ err = res.Decode(&serp)
 Results are JSON unless you set `Format` to `FormatHTML` or `FormatMarkdown`. `Location`, `UULE` and `Lat`/`Lon` are mutually exclusive. Searches leave through DataFuel's own pool: pick the market with `Country` and `Language`; `ProxyCountry` is accepted but not used yet.
 
 - `Page` is how many result pages to fetch (default 1, capped at 10). They come back merged into one `organic` list with running positions; the other sections come from page 1. A search costs 10 credits per page, pages Google did not serve are refunded, and the result's `page` is the number returned.
+- `Start` is the result offset of the first page, a multiple of 10 up to 90: `Start: 10, Page: 1` returns page 2 only. Pages from separate requests can repeat or miss results; for one consistent list use `Page` alone.
+- `ResolveURL: true` resolves Google's `/goto` links to their targets (a few seconds more). Without it most results carry only `redirect`.
+- `Engine: datafuel.SearchEngineShopping` with `URL` (a `/search` product link with `ibp=oshop` and `prds`, e.g. from `product_grids`) reads one Google Shopping product page: offers, rating, reviews, specifications, variants. On a job, pass `URLs` instead of `Queries`; setting `URL` returns `ErrSearchJobURL` before any request.
 - `Device: datafuel.DeviceMobile` returns mobile results (default `DeviceDesktop`). Mobile results have no `total_results`.
 - `AIOverview: true` adds Google's AI overview, when it shows one, as `ai_overview` (text, products, references):
 
@@ -172,6 +178,31 @@ err = res.Decode(&answer)
 ```
 
 `Model` only works with `EngineDuckAI`; the accepted models are listed on `AskRequest.Model`, anything else is rejected with `ErrInvalidAttributes`. On `EngineDuckAI`, `WebSearch` only affects the `tinfoil/*` models; other duck_ai models ignore it. `FollowUp` works on `EngineOpenAI` and `EnginePerplexity` only; on other engines the task fails and is refunded. `res.Engine` names the engine the task asked for. `Format` is ignored: answers are always JSON.
+
+## Webhooks
+
+Set `Webhook` on a job or crawl to get one signed `POST` when it finishes, with counts but no results:
+
+```go
+id, err := client.CreateJob(ctx, &datafuel.JobRequest{
+    URLs:    urls,
+    Webhook: &datafuel.Webhook{URL: "https://example.com/hooks/datafuel", Metadata: map[string]string{"run": "42"}},
+})
+secret, err := client.WebhookSecret(ctx) // verify deliveries with any Standard Webhooks library
+```
+
+To receive every job or crawl event, create an account endpoint. Store its own secret: only creating the endpoint and `RotateWebhookEndpointSecret` return one:
+
+```go
+ep, err := client.CreateWebhookEndpoint(ctx, &datafuel.CreateWebhookEndpointRequest{
+    URL:        "https://example.com/hooks/datafuel",
+    EventTypes: []string{"crawl.*", "job.failed"},
+})
+_, err = client.TestWebhookEndpoint(ctx, ep.ID)
+page, err := client.ListWebhookDeliveries(ctx, &datafuel.WebhookDeliveriesOptions{EndpointID: ep.ID, Status: "failed"})
+```
+
+`GetWebhookEndpoint`, `ListWebhookEndpoints`, `UpdateWebhookEndpoint`, `DeleteWebhookEndpoint`, `RotateWebhookSecret`, `RotateWebhookEndpointSecret` and `RetryWebhookDelivery` cover the rest. These writes are not retried automatically.
 
 ## Map
 
@@ -223,7 +254,8 @@ health, err := client.Health(ctx, true)                       // health.OK() is 
 All work with `errors.Is` and `errors.As`.
 
 - `datafuel.ErrNoAPIKey`: no key was passed and `DATAFUEL_API_KEY` is empty. Returned before any request.
-- `*datafuel.APIError`: the API refused the request. Sentinels: `ErrUnauthorized`, `ErrInsufficientCredits`, `ErrRateLimited`, `ErrNotFound`, `ErrInvalidAttributes`, `ErrIdempotencyKeyReused`, `ErrJobRequiresMultipleTargets`, `ErrJobNotCancellable`, `ErrInvalidQueryParam`.
+- `*datafuel.APIError`: the API refused the request. Sentinels: `ErrUnauthorized`, `ErrInsufficientCredits`, `ErrRateLimited`, `ErrNotFound`, `ErrInvalidAttributes`, `ErrIdempotencyKeyReused`, `ErrJobRequiresMultipleTargets`, `ErrJobTooManyTargets`, `ErrJobNotCancellable`, `ErrInvalidQueryParam`, `ErrResultExpired` (the result is past its 30-day retention; `Err()` and `Decode` return it for expired job and crawl entries, and `Result.Expired()` reports them).
+- Webhook and cursor refusals are `*datafuel.APIError` too: `ErrInvalidWebhookURL`, `ErrInvalidWebhookMetadata`, `ErrInvalidWebhookEndpoint`, `ErrWebhookEndpointNotFound` and `ErrWebhookDeliveryNotFound` (both also match `ErrNotFound`), `ErrWebhookEndpointLimitReached`, `ErrWebhookEndpointExists`, `ErrWebhookTestInProgress`, `ErrWebhookDeliveryNotRetryable`, `ErrWebhooksUnavailable`, `ErrInvalidCursor`.
 - `ErrTaskStillProcessing`: the API answered 202, the task has not finished. `Scrape`, `Map`, `Search` and `Ask` handle it by re-sending with the same `Idempotency-Key` until the task is done, so you only see it, together with the context error, when your context ends first. Send the request again with the same `IdempotencyKey` to pick the task up.
 - `ErrModuleUnavailable`, `ErrEngineUnavailable`: an operator switched a task type or LLM engine off, e.g. during a provider outage. The reason is in the error message, nothing is charged, and the SDK does not retry. `client.Capabilities(ctx)` lists what is on.
 - `ErrServiceUnavailable`: `503 SERVICE_UNAVAILABLE`, the API could not reach a backing store. It is transient, so the SDK retries it like any other 503, unlike `ErrModuleUnavailable` and `ErrEngineUnavailable`.

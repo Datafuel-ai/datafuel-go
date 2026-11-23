@@ -15,6 +15,8 @@
 //     [Client.Analytics], [Client.Transactions]
 //   - what a request may contain   → [Client.JSInstructions],
 //     [Client.AIProviders], [Client.ProxyLocations], [Client.ProxyASNs]
+//   - be told when work finishes   → Webhook on a job or crawl, or
+//     [Client.CreateWebhookEndpoint]
 //
 // Every write carries an Idempotency-Key (generated when you do not set one),
 // so the client can retry dropped connections and 429/5xx answers without
@@ -41,7 +43,7 @@ const (
 	// DefaultBaseURL is the production API.
 	DefaultBaseURL = "https://scraping-api.datafuel.ai/api/v1"
 	// Version of this SDK, sent in the User-Agent.
-	Version = "0.5.1"
+	Version = "0.6.0"
 )
 
 // Client talks to the DataFuel API. It is safe for concurrent use.

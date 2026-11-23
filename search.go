@@ -38,11 +38,25 @@ type AIOverviewReference struct {
 	Redirect string `json:"redirect,omitempty"`
 }
 
+type SearchEngine string
+
+const (
+	SearchEngineGoogle SearchEngine = "google_search"
+	// SearchEngineShopping reads one product page at URL. It takes Country,
+	// Language, GoogleDomain and Format, and rejects the web search options.
+	SearchEngineShopping SearchEngine = "google_shopping"
+)
+
 // SearchRequest is a Google search (task type serp). Location, UULE and
 // Lat/Lon are mutually exclusive; Radius needs one of them. The result is
 // JSON by default, read it with Result.Decode.
 type SearchRequest struct {
 	Query string `json:"query,omitempty"`
+	// Engine is SearchEngineGoogle (default) or SearchEngineShopping.
+	Engine SearchEngine `json:"engine,omitempty"`
+	// URL is the product page for SearchEngineShopping: a /search link with
+	// ibp=oshop and prds, e.g. a product_grids link. Set it instead of Query.
+	URL string `json:"url,omitempty"`
 
 	Country      string `json:"country,omitempty"`  // gl, e.g. "us"
 	Language     string `json:"language,omitempty"` // hl, e.g. "en"
@@ -55,6 +69,12 @@ type SearchRequest struct {
 	// negative value. Each page costs 10 credits, pages Google did not serve
 	// are refunded, and the result's "page" is the number returned.
 	Page int `json:"page,omitempty"`
+	// Start is the result offset of the first page, a multiple of 10 up to
+	// 90: Start 10 with Page 1 returns page 2 only. Page is capped at
+	// 10 - Start/10, and the cap also sets what is billed: Start 50 with
+	// Page 10 returns and bills 5 pages. Pages from separate requests can
+	// repeat or miss results; for one consistent list use Page.
+	Start int `json:"start,omitempty"`
 
 	UULE   string   `json:"uule,omitempty"`
 	Lat    *float64 `json:"lat,omitempty"`
@@ -81,6 +101,10 @@ type SearchRequest struct {
 	// "ai_overview" key of the result; decode it into an [AIOverview].
 	AIOverview bool `json:"ai_overview,omitempty"`
 
+	// ResolveURL resolves Google's /goto links to their targets, a few
+	// seconds more. Without it most results carry only "redirect".
+	ResolveURL bool `json:"resolve_url,omitempty"`
+
 	// ProxyCountry is accepted but not used yet: searches leave through
 	// DataFuel's own pool. Target a market with Country and Language.
 	ProxyCountry string `json:"proxy_country,omitempty"`
@@ -90,11 +114,15 @@ type SearchRequest struct {
 	IdempotencyKey string `json:"-"`
 }
 
-// SearchJobRequest sends a batch of at least two queries.
+// SearchJobRequest sends a batch of at least two Queries, or at least two URLs
+// with SearchEngineShopping.
 type SearchJobRequest struct {
-	Queries       []string
+	Queries []string
+	// URLs are the product pages for SearchEngineShopping, instead of Queries.
+	URLs          []string
 	Sequential    bool
-	SearchRequest // Query is ignored
+	Webhook       *Webhook
+	SearchRequest // Query is ignored; URL returns ErrSearchJobURL
 }
 
 // Search runs one Google search and returns the results page.
@@ -114,11 +142,19 @@ func (c *Client) CreateSearchJob(ctx context.Context, req *SearchJobRequest) (st
 	if req == nil {
 		return "", ErrNilRequest
 	}
+	if req.URL != "" {
+		return "", ErrSearchJobURL
+	}
 	attrs, err := toAttrs(&req.SearchRequest)
 	if err != nil {
 		return "", err
 	}
 	delete(attrs, "query")
-	attrs["queries"] = req.Queries
-	return c.createJob(ctx, envelope{Type: "serp", Attributes: attrs}, req.Sequential, req.IdempotencyKey)
+	if len(req.URLs) > 0 {
+		attrs["urls"] = req.URLs
+	}
+	if len(req.Queries) > 0 || len(req.URLs) == 0 {
+		attrs["queries"] = req.Queries
+	}
+	return c.createJob(ctx, envelope{Type: "serp", Webhook: req.Webhook, Attributes: attrs}, req.Sequential, req.IdempotencyKey)
 }
